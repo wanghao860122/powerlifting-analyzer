@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>健力課表分析器 · Powerlifting Progress Analyzer</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1419; --card:#1a2029; --card2:#232b36; --ink:#e6edf3; --mut:#9aa7b4;
+    --line:#2d3742; --accent:#f5a623;
+    --squat:#4363d8; --bench:#3cb44b; --dead:#e6194B;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,"PingFang TC","Microsoft JhengHei",Segoe UI,Roboto,sans-serif;line-height:1.55}
+  header{padding:22px 28px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#141b24,#0f1419)}
+  h1{margin:0 0 4px;font-size:22px}
+  .sub{color:var(--mut);font-size:13px}
+  .wrap{max-width:1200px;margin:0 auto;padding:22px 24px 60px}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--card);
+       padding:14px;border:1px solid var(--line);border-radius:12px;margin-bottom:18px}
+  input[type=text]{flex:1;min-width:280px;background:#0d1218;border:1px solid var(--line);color:var(--ink);
+       padding:10px 12px;border-radius:8px;font-size:13px}
+  select{background:#0d1218;border:1px solid var(--line);color:var(--ink);padding:8px 10px;border-radius:8px;font-size:13px}
+  button{background:var(--accent);color:#161616;border:0;padding:10px 18px;border-radius:8px;
+       font-weight:700;cursor:pointer;font-size:14px}
+  button:hover{filter:brightness(1.08)}
+  #status{font-size:13px;color:var(--mut)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:20px}
+  .card h2{margin:0 0 2px;font-size:17px}
+  .card .tag{color:var(--mut);font-size:12px;margin-bottom:12px}
+  .grid{display:grid;grid-template-columns:1.9fr 1fr;gap:18px;align-items:start}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .chartbox{position:relative;height:340px}
+  .explain{background:var(--card2);border-radius:10px;padding:14px 16px;font-size:13px}
+  .explain h3{margin:0 0 6px;font-size:13px;color:var(--accent);letter-spacing:.3px}
+  .explain p{margin:6px 0;color:#cdd7e0}
+  .explain code{background:#0d1218;padding:1px 5px;border-radius:4px;color:#ffd479;font-size:12px}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px}
+  .kpi div{background:#0d1218;border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:96px}
+  .kpi b{display:block;font-size:19px}
+  .kpi span{font-size:11px;color:var(--mut)}
+  .up{color:#4ade80}.flat{color:#fbbf24}.down{color:#f87171}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:6px 8px;text-align:center}
+  th{background:#0d1218;color:var(--mut)}
+  .note{font-size:12px;color:var(--mut);margin-top:10px}
+  details{margin-top:8px}summary{cursor:pointer;color:var(--accent);font-size:13px}
+  .formula{font-family:ui-monospace,Menlo,monospace;background:#0d1218;padding:10px;border-radius:8px;
+       font-size:12.5px;color:#ffd479;overflow-x:auto}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏋️ 健力課表分析器 <span style="font-size:14px;color:var(--mut)">Powerlifting Progress Analyzer</span></h1>
+  <div class="sub">貼上 Google Sheet 網址（需設為「知道連結的任何人可檢視」）→ 自動讀取所有 Cycle1／Cycle2… 分頁，分析三大項的 RPE-重量趨勢、量化進步率與總和 e1RM。可按 Cycle 或自訂週數選分析區間。</div>
+</header>
+<div class="wrap">
+
+  <div class="bar">
+    <input id="url" type="text" placeholder="貼上 Google Sheets 網址或 ID">
+    <button onclick="run()">分析</button>
+    <span id="status">準備就緒</span>
+  </div>
+
+  <div class="bar" id="rangebar" style="display:none">
+    <span style="color:var(--mut);font-size:13px;font-weight:600">快速選</span>
+    <span id="cyclebtns" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+    <span style="color:var(--mut);font-size:13px">｜自訂週</span>
+    <select id="fromWk"></select>
+    <span style="color:var(--mut)">→</span>
+    <select id="toWk"></select>
+    <button onclick="applyRange()">更新</button>
+    <span id="rangeinfo" style="font-size:12px;color:var(--mut);width:100%"></span>
+  </div>
+
+  <!-- Big3 total -->
+  <div class="card">
+    <h2>三項總和 · SBD Total（估計 1RM 加總）</h2>
+    <div class="tag">每週各項最佳 e1RM 相加 → 你的「總合力量」隨時間的曲線，這是健力最核心的進步指標</div>
+    <div class="grid">
+      <div class="chartbox"><canvas id="c_total"></canvas></div>
+      <div class="explain">
+        <h3>演算法 · SBD Total</h3>
+        <p>健力比的是三項總和。單看一項會被當週安排（輕重日）誤導，<b>總和</b>最能反映整體進步。</p>
+        <div class="formula">Total(週) = maxE1RM(深蹲)
+        + maxE1RM(臥推) + maxE1RM(硬舉)</div>
+        <p>某項當週沒練時，沿用<b>最近一次</b>的最佳 e1RM（carry-forward），讓曲線連續。</p>
+        <div id="kpi_total" class="kpi"></div>
+        <p class="note" id="proj_total"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress by RPE bar -->
+  <div class="card">
+    <h2>量化進步率 · Progress rate by RPE</h2>
+    <div class="tag">固定 RPE 下，重量每週上升幾公斤（回歸斜率）→ 長條越高＝在該吃力程度進步越多</div>
+    <div class="grid">
+      <div class="chartbox"><canvas id="c_bar"></canvas></div>
+      <div class="explain">
+        <h3>演算法 · 線性回歸斜率</h3>
+        <p>把某動作在<b>同一個 RPE</b> 的重量對「週次」做最小平方回歸，斜率 <code>b₁</code> 就是「每週進步 kg」。</p>
+        <div class="formula">b₁ = Σ(xᵢ−x̄)(yᵢ−ȳ) / Σ(xᵢ−x̄)²
+        x = 週次,  y = 重量</div>
+        <p>控制了努力程度，所以不會被「今天很輕鬆」混淆——這是回答「哪個 RPE 進步最多」最乾淨的方式。</p>
+        <p class="note">僅顯示資料點 n≥4 的 RPE（統計上較可信）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-lift charts injected here -->
+  <div id="lifts"></div>
+
+  <!-- Methods -->
+  <div class="card">
+    <h2>📐 演算法與名詞解說</h2>
+    <div class="explain" style="background:transparent;padding:0">
+      <h3>1 · 估計 1RM（e1RM，RPE-based）</h3>
+      <p>用 RTS 的 RPE 對照表，把「重量 × 次數 × 實際RPE」換算成單次最大重量估計，讓不同組次數可以公平比較。</p>
+      <div class="formula">e1RM = 重量 ÷ %1RM(RPE, 次數)
+      例：60kg × 5下 @ RPE8  →  %1RM≈79.9%  →  e1RM≈75kg</div>
+      <h3 style="margin-top:14px">2 · 失敗組排除</h3>
+      <p>課表中標 <code>X</code>、且沒有記錄重量/RPE 的攻重視為失敗，<b>不納入計算</b>。</p>
+      <h3 style="margin-top:14px">3 · 進步判定（斜率門檻）</h3>
+      <p><span class="up">↑ 進步</span> 斜率 &gt; 0.15 ｜ <span class="flat">→ 停滯</span> |斜率| ≤ 0.15 ｜ <span class="down">↓ 退步</span> 斜率 &lt; −0.15（kg/週）。</p>
+      <h3 style="margin-top:14px">4 · 趨勢外推（Projection）</h3>
+      <p>用 e1RM 回歸線往後延伸 4 週，估計若維持現況的預期值：<code>預估 = 目前趨勢值 + 斜率 × 4</code>。僅供參考，非保證。</p>
+      <h3 style="margin-top:14px">5 · 平台期偵測</h3>
+      <p>當某項 e1RM 斜率接近 0（|斜率|&lt;0.1）判定為<b>平台期</b>，代表需要調整訓練變數（頻率/量/強度/技術）。</p>
+    </div>
+    <details><summary>展開：使用的 RTS RPE 百分比表（%1RM）</summary>
+      <div id="rpetable"></div>
+    </details>
+  </div>
+
+  <div class="note">時間軸使用課表的「週次順序」（B1W1…B5W1）而非真實日期，因原表無日期欄。重複的週標籤依出現順序視為連續週。</div>
+</div>
+
+<script>
+/* ---------- RTS RPE % table (fraction of 1RM). reps 1..8, rpe 10..5 ---------- */
+const RAW={ // from workbook RPE SHEET, divided by 47.5
+ 10:[47.5,45.3625,43.795,42.37,40.9925,39.7575,38.5225,37.335],
+ 9.5:[46.455,44.57875,43.0825,41.68125,40.375,39.14,37.92875,36.765],
+ 9:[45.3625,43.795,42.37,40.9925,39.7575,38.5225,37.335,36.195],
+ 8.5:[44.6025,43.0825,41.68125,40.375,38.5225,37.92875,36.765,35.64875],
+ 8:[43.795,42.37,40.9925,39.7575,37.92875,37.335,36.195,35.64875],
+ 7.5:[43.0825,41.68125,40.375,39.14,37.92875,36.765,35.64875,33.5825],
+ 7:[42.37,40.9925,39.7575,38.5225,37.335,36.195,35.1025,33.5825],
+ 6.5:[41.705,40.375,39.14,37.92875,36.765,35.64875,34.3425,32.94125],
+ 6:[40.9925,39.7575,38.5225,37.335,36.195,35.1025,33.5825,32.3],
+ 5.5:[40.375,39.14,37.92875,36.765,35.64875,34.3425,32.94125,30.37625],
+ 5:[39.7575,38.5225,37.335,36.195,35.1025,33.5825,32.3,31.0175]};
+const PCT={}; for(const r in RAW){PCT[r]=RAW[r].map(v=>v/47.5);}
+function pct(rpe,reps){rpe=Math.max(5,Math.min(10,Math.round(rpe*2)/2));reps=Math.max(1,Math.min(8,Math.round(reps)));
+  const row=PCT[rpe]; return row?row[reps-1]:null;}
+function e1rm(w,reps,rpe){const p=pct(rpe,reps);return (w&&reps&&rpe&&p)?w/p:null;}
+
+const RPE_COLORS={5:'#ff6b6b',5.5:'#ffa94d',6:'#ffe066',6.5:'#a9e34b',7:'#4dabf7',
+  7.5:'#b197fc',8:'#f783ac',8.5:'#63e6be',9:'#e599f7',9.5:'#66d9e8',10:'#ffffff'};
+const LIFTS=[{key:'Squat',name:'深蹲 Squat',match:'Squat',color:getVar('--squat')},
+  {key:'Bench',name:'臥推 Bench (Pause)',match:'Pause Bench',color:getVar('--bench')},
+  {key:'Deadlift',name:'硬舉 Deadlift',match:'Deadlift',color:getVar('--dead')}];
+function getVar(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+
+let CH={}; // chart instances
+let DATA={recs:[],labels:[],nW:0}; // parsed sheet (all weeks)
+function idFromUrl(u){const m=u.match(/\/d\/([a-zA-Z0-9-_]+)/);return m?m[1]:u.trim();}
+function titleCase(s){return s.replace(/\s+/g,' ').trim().replace(/\w\S*/g,t=>t.charAt(0).toUpperCase()+t.slice(1).toLowerCase());}
+function parseReps(v){if(v==null)return null;const s=String(v);const m=s.match(/\d+/g);
+  if(s.includes('*')&&m&&m.length>=2)return +m[1]; if(m)return +m[m.length-1]; return null;}
+function slope(xs,ys){const n=xs.length;if(n<2)return null;const mx=xs.reduce((a,b)=>a+b,0)/n,my=ys.reduce((a,b)=>a+b,0)/n;
+  let num=0,den=0;for(let i=0;i<n;i++){num+=(xs[i]-mx)*(ys[i]-my);den+=(xs[i]-mx)**2;}return den?num/den:null;}
+function intercept(xs,ys,b1){const n=xs.length;const mx=xs.reduce((a,b)=>a+b,0)/n,my=ys.reduce((a,b)=>a+b,0)/n;return my-b1*mx;}
+
+/* ---------- fetch via gviz JSONP ---------- */
+function fetchSheet(id,sheet){return new Promise((res,rej)=>{
+  const cb='__gviz'+Math.random().toString(36).slice(2);
+  window[cb]=(o)=>{cleanup();res(o);};
+  function cleanup(){delete window[cb];s.remove();clearTimeout(t);}
+  const t=setTimeout(()=>{cleanup();rej(new Error('timeout'));},15000);
+  const s=document.createElement('script');
+  s.src=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?sheet=${encodeURIComponent(sheet)}&headers=0&tqx=responseHandler:${cb}`;
+  s.onerror=()=>{cleanup();rej(new Error('無法載入，請確認共用設定為「知道連結的任何人」'));};
+  document.body.appendChild(s);
+});}
+
+function gvizToGrid(resp){ // -> 2D array [row][col] (col index = spreadsheet column, 0-based)
+  const rows=resp.table.rows; const grid=[];
+  for(const r of rows){const arr=(r.c||[]).map(c=>c?c.v:null);grid.push(arr);}
+  return grid;
+}
+
+function parse(grid){
+  const row0=grid[0]||[];
+  const weekCols=[]; row0.forEach((v,i)=>{if(v!=null&&String(v).trim()!=='')weekCols.push({i,label:String(v).trim()})});
+  const recs=[];
+  weekCols.forEach((wk,ti)=>{
+    const ex=wk.i, vol=wk.i+1, wt=wk.i+3, rp=wk.i+4;
+    for(let r=2;r<grid.length;r++){
+      const exv=grid[r][ex]; if(exv==null||String(exv).trim()==='')continue;
+      const exs=String(exv).trim(); const low=exs.toLowerCase();
+      if(low.includes('excersie')||low.includes('volume'))continue;
+      let w=grid[r][wt]; w=(typeof w==='number'&&w>0&&w<1000)?w:null;
+      let rpe=grid[r][rp]; rpe=(typeof rpe==='number'&&rpe>=1&&rpe<=10.5)?rpe:null; // 過濾誤植的日期/怪值
+      const reps=parseReps(grid[r][vol]);
+      recs.push({t:ti+1,label:wk.label,exn:titleCase(exs),w,rpe,reps,
+        e:(w&&rpe&&reps)?e1rm(w,reps,rpe):null});
+    }
+  });
+  return {recs,weeks:weekCols.map(w=>w.label)};
+}
+
+/* ---------- rendering ---------- */
+function bestPerWeekRPE(recs,match){
+  const b={};
+  recs.filter(r=>r.exn===match&&r.w&&r.rpe).forEach(r=>{
+    const rk=Math.round(r.rpe*2)/2;const k=r.t+'|'+rk;
+    if(!(k in b)||r.w>b[k].w)b[k]={t:r.t,rk,w:r.w};});
+  const byR={};Object.values(b).forEach(o=>{(byR[o.rk]=byR[o.rk]||[]).push({x:o.t,y:o.w});});
+  for(const k in byR)byR[k].sort((a,b)=>a.x-b.x);
+  return byR;
+}
+function e1Series(recs,match){return recs.filter(r=>r.exn===match&&r.e).map(r=>({x:r.t,y:r.e})).sort((a,b)=>a.x-b.x);}
+
+function verdict(sl){if(sl>0.15)return['↑ 進步','up'];if(sl<-0.15)return['↓ 退步','down'];return['→ 停滯','flat'];}
+
+function renderLift(lift,recs,labels,xmin,xmax){
+  const byR=bestPerWeekRPE(recs,lift.match);
+  const ds=Object.keys(byR).map(rk=>({label:'RPE '+(+rk),data:byR[rk],
+     borderColor:RPE_COLORS[rk]||'#888',backgroundColor:RPE_COLORS[rk]||'#888',
+     pointRadius:5,pointBorderColor:'rgba(0,0,0,.4)',borderWidth:2,tension:.15,showLine:true}));
+  const e=e1Series(recs,lift.match);
+  const xs=e.map(p=>p.x),ys=e.map(p=>p.y);const b1=slope(xs,ys),b0=b1!=null?intercept(xs,ys,b1):null;
+  if(b1!=null){const x0=Math.min(...xs),x1=Math.max(...xs);
+    ds.push({label:`e1RM 趨勢 (${b1>=0?'+':''}${b1.toFixed(2)}/週)`,
+      data:[{x:x0,y:b0+b1*x0},{x:x1,y:b0+b1*x1}],borderColor:'#ff3b3b',borderDash:[7,4],
+      borderWidth:2.4,pointRadius:0,fill:false});
+    ds.push({label:'e1RM 點',data:e,borderColor:'rgba(255,80,80,.35)',
+      backgroundColor:'rgba(255,80,80,.35)',pointRadius:2.5,showLine:false});}
+
+  // 標出本區間「實際舉起的最重一次」(PR)，用金色星星讓它明顯
+  let pr=null; recs.filter(r=>r.exn===lift.match&&r.w&&r.rpe).forEach(r=>{if(!pr||r.w>pr.w)pr=r;});
+  if(pr)ds.push({label:`最重 ${pr.w}kg ★`,data:[{x:pr.t,y:pr.w}],borderColor:'#ffd43b',
+    backgroundColor:'#ffd43b',pointStyle:'star',pointRadius:13,pointHoverRadius:15,showLine:false});
+
+  const [vtxt,vcls]=verdict(b1||0);
+  const first=avg(ys.slice(0,3)),last=avg(ys.slice(-3));
+  const dpc=first?((last-first)/first*100):0;
+
+  const wrap=document.createElement('div');wrap.className='card';
+  wrap.innerHTML=`<h2>${lift.name}</h2>
+    <div class="tag">每條彩色線＝一個 RPE，同週同 RPE 取最重一組；紅虛線＝估計 1RM 趨勢</div>
+    <div class="grid">
+      <div class="chartbox"><canvas></canvas></div>
+      <div class="explain">
+        <h3>這一項的判讀</h3>
+        <div class="kpi">
+          <div><b class="${vcls}">${vtxt}</b><span>總判定</span></div>
+          <div><b>${b1!=null?(b1>=0?'+':'')+b1.toFixed(2):'—'}</b><span>e1RM kg/週</span></div>
+          <div><b>${first?first.toFixed(1):'—'}→${last?last.toFixed(1):'—'}</b><span>e1RM 首→末</span></div>
+          <div><b>${dpc>=0?'+':''}${dpc.toFixed(1)}%</b><span>總變化</span></div>
+          <div><b style="color:#ffd43b">${pr?pr.w+'kg':'—'}</b><span>本區間最重 ${pr?'@RPE'+(+pr.rpe)+' · '+labels[pr.t-1]:''}</span></div>
+        </div>
+        <p class="note">${b1!=null?`若維持趨勢，4 週後預估 e1RM ≈ <b>${(b0+b1*(Math.max(...xs)+4)).toFixed(1)} kg</b>。`:''}</p>
+        <div id="rpe_${lift.key}"></div>
+      </div>
+    </div>`;
+  document.getElementById('lifts').appendChild(wrap);
+  const ctx=wrap.querySelector('canvas');
+  CH['lift_'+lift.key]=new Chart(ctx,{type:'line',data:{datasets:ds},options:baseOpts(labels,'重量 (kg)',xmin,xmax)});
+
+  // per-RPE mini table
+  const rows=Object.keys(byR).map(rk=>{const pts=byR[rk];const s=slope(pts.map(p=>p.x),pts.map(p=>p.y));
+    return {rk:+rk,n:pts.length,s};}).sort((a,b)=>a.rk-b.rk);
+  let html='<table><tr><th>RPE</th><th>n</th><th>kg/週</th></tr>';
+  rows.forEach(r=>{html+=`<tr><td>${r.rk}</td><td>${r.n}</td><td>${r.n>=4&&r.s!=null?(r.s>=0?'+':'')+r.s.toFixed(2):'—'}</td></tr>`;});
+  html+='</table>';wrap.querySelector('#rpe_'+lift.key).innerHTML=html;
+}
+function avg(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;}
+
+function baseOpts(labels,ytitle,xmin,xmax){return{responsive:true,maintainAspectRatio:false,
+  parsing:false,interaction:{mode:'nearest'},
+  scales:{x:{type:'linear',min:xmin||1,max:xmax||labels.length,ticks:{stepSize:1,color:'#9aa7b4',
+      callback:v=>labels[v-1]||v,maxRotation:90,minRotation:90,font:{size:9}},
+      grid:{color:'#2d3742'}},
+    y:{title:{display:true,text:ytitle,color:'#9aa7b4'},ticks:{color:'#9aa7b4'},grid:{color:'#2d3742'}}},
+  plugins:{legend:{labels:{color:'#cdd7e0',boxWidth:12,font:{size:10}}}}};}
+
+function renderTotal(recs,labels,xmin,xmax){
+  // best e1RM per lift per week, carry-forward, sum
+  const nW=labels.length; const lo=xmin||1, hi=xmax||nW;
+  const bestByWeek={}; LIFTS.forEach(l=>bestByWeek[l.key]=Array(nW+1).fill(null));
+  LIFTS.forEach(l=>{recs.filter(r=>r.exn===l.match&&r.e).forEach(r=>{
+    if(bestByWeek[l.key][r.t]==null||r.e>bestByWeek[l.key][r.t])bestByWeek[l.key][r.t]=r.e;});});
+  const carry={},pts=[];LIFTS.forEach(l=>carry[l.key]=null);
+  for(let t=lo;t<=hi;t++){LIFTS.forEach(l=>{if(bestByWeek[l.key][t]!=null)carry[l.key]=bestByWeek[l.key][t];});
+    if(LIFTS.every(l=>carry[l.key]!=null))pts.push({x:t,y:LIFTS.reduce((s,l)=>s+carry[l.key],0)});}
+  const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y);const b1=slope(xs,ys),b0=b1!=null?intercept(xs,ys,b1):null;
+  const ds=[{label:'SBD Total e1RM',data:pts,borderColor:'#f5a623',backgroundColor:'#f5a623',
+     pointRadius:4,borderWidth:2.6,tension:.15}];
+  if(b1!=null){const x0=Math.min(...xs),x1=Math.max(...xs);
+    ds.push({label:`趨勢 (${b1>=0?'+':''}${b1.toFixed(2)}/週)`,data:[{x:x0,y:b0+b1*x0},{x:x1,y:b0+b1*x1}],
+      borderColor:'#ffd479',borderDash:[7,4],borderWidth:2,pointRadius:0});}
+  CH.total=new Chart(document.getElementById('c_total'),{type:'line',data:{datasets:ds},options:baseOpts(labels,'總和 e1RM (kg)',lo,hi)});
+  const first=avg(ys.slice(0,3)),last=avg(ys.slice(-3));
+  document.getElementById('kpi_total').innerHTML=
+    `<div><b>${last?last.toFixed(0):'—'}</b><span>目前總和 kg</span></div>
+     <div><b>${b1!=null?(b1>=0?'+':'')+b1.toFixed(2):'—'}</b><span>kg/週</span></div>
+     <div><b>${first&&last?((last-first)/first*100>=0?'+':'')+((last-first)/first*100).toFixed(1)+'%':'—'}</b><span>總變化</span></div>`;
+  if(b1!=null)document.getElementById('proj_total').innerHTML=
+    `若維持趨勢，4 週後預估總和 ≈ <b>${(b0+b1*(Math.max(...xs)+4)).toFixed(0)} kg</b>。`;
+}
+
+function renderBar(recs){
+  const labels=[],datasets=[];const perLiftColors=LIFTS.map(l=>l.color);
+  // collect union of RPEs with n>=4 across lifts
+  const rpeSet=new Set();
+  const data={};LIFTS.forEach(l=>{data[l.key]={};
+    const d={};recs.filter(r=>r.exn===l.match&&r.w&&r.rpe).forEach(r=>{const rk=Math.round(r.rpe*2)/2;(d[rk]=d[rk]||[]).push({x:r.t,y:r.w});});
+    for(const rk in d){if(d[rk].length>=4){const s=slope(d[rk].map(p=>p.x),d[rk].map(p=>p.y));data[l.key][rk]=s;rpeSet.add(+rk);}}});
+  const rpes=[...rpeSet].sort((a,b)=>a-b);
+  const barDs=LIFTS.map(l=>({label:l.name.split(' ')[0],
+     data:rpes.map(rk=>data[l.key][rk]!=null?+data[l.key][rk].toFixed(3):null),
+     backgroundColor:l.color,borderColor:'#111',borderWidth:1}));
+  CH.bar=new Chart(document.getElementById('c_bar'),{type:'bar',
+    data:{labels:rpes.map(r=>'RPE '+r),datasets:barDs},
+    options:{responsive:true,maintainAspectRatio:false,
+      scales:{y:{title:{display:true,text:'kg / 週',color:'#9aa7b4'},grid:{color:'#2d3742'},ticks:{color:'#9aa7b4'}},
+        x:{grid:{color:'#2d3742'},ticks:{color:'#9aa7b4'}}},
+      plugins:{legend:{labels:{color:'#cdd7e0'}}}}});
+}
+
+function renderRpeTable(){
+  let h='<table><tr><th>RPE\\reps</th>'+[1,2,3,4,5,6,7,8].map(r=>'<th>'+r+'</th>').join('')+'</tr>';
+  Object.keys(PCT).sort((a,b)=>b-a).forEach(rp=>{h+='<tr><td>'+rp+'</td>'+PCT[rp].map(v=>'<td>'+(v*100).toFixed(1)+'%</td>').join('')+'</tr>';});
+  h+='</table>';document.getElementById('rpetable').innerHTML=h;
+}
+
+// 真正的 Cycle 分頁一定含表頭關鍵字；不存在的分頁 gviz 會回退到別的分頁(如 intro)，以此區分
+function isCycleSheet(grid){return grid.some(row=>row.some(v=>v&&/xcersie|weight\s*load/i.test(String(v))));}
+
+async function run(){
+  const st=document.getElementById('status');
+  const id=idFromUrl(document.getElementById('url').value);
+  if(!id){st.textContent='請先輸入網址';return;}
+  st.textContent='載入中…';
+  Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
+  try{
+    let allRecs=[], allLabels=[], cycles=[];
+    for(let n=1;n<=30;n++){                       // 逐一嘗試 Cycle1、Cycle2 …直到不存在
+      let grid;
+      try{ grid=gvizToGrid(await fetchSheet(id,'Cycle'+n)); }catch(e){ if(n===1) throw e; break; }
+      if(!isCycleSheet(grid)) break;              // 此 Cycle 不存在（gviz 回退到其他分頁）
+      const {recs,weeks}=parse(grid);
+      if(!weeks.length) break;
+      const base=allLabels.length;
+      recs.forEach(r=>{r.t+=base; r.cycle=n;});    // 時間軸接續前面的 cycle
+      const labs=weeks.map((w,i)=>{
+        const dup=weeks.filter((x,j)=>x===w&&j<=i).length;
+        const tot=weeks.filter(x=>x===w).length;
+        return `C${n} ${tot>1?w+String.fromCharCode(96+dup):w}`;});
+      cycles.push({n,from:base+1,to:base+weeks.length});
+      allLabels=allLabels.concat(labs);
+      allRecs=allRecs.concat(recs);
+    }
+    if(!allLabels.length)throw new Error('找不到 Cycle 分頁，請確認分頁名為 Cycle1 / Cycle2 …且為此課表格式');
+    DATA={recs:allRecs,labels:allLabels,nW:allLabels.length,cycles};
+    populateRange(allLabels);
+    buildCycleButtons(cycles);
+    document.getElementById('rangebar').style.display='flex';
+    analyze(1,allLabels.length);
+    st.textContent=`✓ 完成：${cycles.length} 個 Cycle · 共 ${allLabels.length} 週。可用上方按鈕或下拉選區間`;
+  }catch(e){st.textContent='✗ '+e.message;console.error(e);}
+}
+
+function buildCycleButtons(cycles){
+  const box=document.getElementById('cyclebtns');box.innerHTML='';
+  const mk=(txt,lo,hi)=>{const b=document.createElement('button');b.textContent=txt;
+    b.style.cssText='padding:6px 11px;font-size:12px;background:var(--card2);color:var(--ink);border:1px solid var(--line)';
+    b.onclick=()=>{document.getElementById('fromWk').value=lo;document.getElementById('toWk').value=hi;analyze(lo,hi);};
+    box.appendChild(b);};
+  mk('全部',1,DATA.nW);
+  cycles.forEach(c=>mk('Cycle'+c.n,c.from,c.to));
+}
+
+function populateRange(labels){
+  const f=document.getElementById('fromWk'),t=document.getElementById('toWk');
+  f.innerHTML='';t.innerHTML='';
+  labels.forEach((w,i)=>{f.add(new Option(w,i+1));t.add(new Option(w,i+1));});
+  f.value=1;t.value=labels.length;
+}
+function applyRange(){
+  let lo=+document.getElementById('fromWk').value, hi=+document.getElementById('toWk').value;
+  if(lo>hi){const x=lo;lo=hi;hi=x;document.getElementById('fromWk').value=lo;document.getElementById('toWk').value=hi;}
+  analyze(lo,hi);
+}
+function analyze(lo,hi){
+  Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
+  const fr=DATA.recs.filter(r=>r.t>=lo&&r.t<=hi); // all analysis reflects this interval
+  renderTotal(fr,DATA.labels,lo,hi);
+  renderBar(fr);
+  LIFTS.forEach(l=>renderLift(l,fr,DATA.labels,lo,hi));
+  const n=fr.filter(r=>r.w&&r.rpe).length;
+  document.getElementById('rangeinfo').textContent=
+    `區間 ${DATA.labels[lo-1]} → ${DATA.labels[hi-1]}（${hi-lo+1} 週 · ${n} 筆有效紀錄，已排除失敗組）`;
+}
+
+renderRpeTable();
+// 分享版：不預填任何人的表；使用者自行貼上自己的 Google Sheet 網址後按「分析」
+document.getElementById('url').value='';
+</script>
+</body>
+</html>
