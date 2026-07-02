@@ -345,6 +345,7 @@ function updateCoeffDisplay(){
     <div><b>${dl?dl.toFixed(1):'—'}</b><span>DOTS 目前</span></div>
     <div><b>${dp?dp.toFixed(1):'—'}</b><span>DOTS 巔峰</span></div>`;}
 
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function parsePlannedRpe(v){
   if(v==null)return null;
   const m=String(v).match(/rpe\s*(\d+(?:[.,]\d+)?)/i);
@@ -372,7 +373,7 @@ function liftNames(recs,kws){
 
 let CH={}; // chart instances
 let DATA={recs:[],labels:[],nW:0}; // parsed sheet (all weeks)
-function idFromUrl(u){const m=u.match(/\/d\/([a-zA-Z0-9-_]+)/);return m?m[1]:u.trim();}
+function idFromUrl(u){const m=u.match(/\/d\/([a-zA-Z0-9-_]+)/);if(m)return m[1];const t=u.trim();return /^[a-zA-Z0-9-_]+$/.test(t)?t:null;}
 function titleCase(s){return s.replace(/\s+/g,' ').trim().replace(/\w\S*/g,t=>t.charAt(0).toUpperCase()+t.slice(1).toLowerCase());}
 function parseReps(v){if(v==null)return null;const s=String(v);const m=s.match(/\d+/g);
   if(s.includes('*')&&m&&m.length>=2)return +m[1]; if(m)return +m[m.length-1]; return null;}
@@ -473,7 +474,7 @@ function renderLift(lift,recs,labels,xmin,xmax){
           <div><b>${b1!=null?(b1>=0?'+':'')+b1.toFixed(2):'—'}</b><span>e1RM kg/週</span></div>
           <div><b>${first?first.toFixed(1):'—'}→${last?last.toFixed(1):'—'}</b><span>e1RM 首→末</span></div>
           <div><b>${dpc>=0?'+':''}${dpc.toFixed(1)}%</b><span>總變化</span></div>
-          <div><b style="color:#ffd43b">${pr?pr.w+'kg':'—'}</b><span>本區間最重 ${pr?'@RPE'+(+pr.rpe)+' · '+labels[pr.t-1]:''}</span></div>
+          <div><b style="color:#ffd43b">${pr?pr.w+'kg':'—'}</b><span>本區間最重 ${pr?'@RPE'+(+pr.rpe)+' · '+esc(labels[pr.t-1]):''}</span></div>
         </div>
         <p class="note">${b1!=null?`若維持趨勢，4 週後預估 e1RM ≈ <b>${(b0+b1*(Math.max(...xs)+4)).toFixed(1)} kg</b>。`:''}</p>
         <div id="rpe_${lift.key}"></div>
@@ -646,6 +647,7 @@ function isCycleSheet(grid){return grid.some(row=>row.some(v=>v&&/xcersie|weight
 async function run(){
   const st=document.getElementById('status');
   const id=idFromUrl(document.getElementById('url').value);
+  if(!id){st('無效的網址或 ID，請貼上完整 Google Sheets 連結');return;}
   if(!id){st.textContent='請先輸入網址';return;}
   st.textContent='載入中…';
   Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
@@ -709,7 +711,7 @@ function analyze(lo,hi){
   LIFTS.forEach(l=>renderLift(l,fr,DATA.labels,lo,hi));
   const n=fr.filter(r=>r.w&&r.rpe).length;
   document.getElementById('rangeinfo').textContent=
-    `區間 ${DATA.labels[lo-1]} → ${DATA.labels[hi-1]}（${hi-lo+1} 週 · ${n} 筆有效紀錄，已排除失敗組）`;
+    `區間 ${esc(DATA.labels[lo-1])} → ${esc(DATA.labels[hi-1])}（${hi-lo+1} 週 · ${n} 筆有效紀錄，已排除失敗組）`;
 }
 
 renderRpeTable();
