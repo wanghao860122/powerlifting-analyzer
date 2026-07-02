@@ -187,13 +187,13 @@
 
   <div class="bar">
     <input id="url" type="text" placeholder="貼上 Google Sheets 網址或 ID">
-    <button onclick="run()">分析</button>
     <input id="bw" type="number" placeholder="體重 kg" min="30" max="250" step="0.1"
       style="width:90px" oninput="updateCoeffDisplay()">
     <select id="sex" onchange="updateCoeffDisplay()">
       <option value="m">男 / M</option>
       <option value="f">女 / F</option>
     </select>
+    <button onclick="run()">分析</button>
     <span id="status">準備就緒</span>
   </div>
 
@@ -485,17 +485,35 @@ function renderLift(lift,recs,labels,xmin,xmax){
 
   // RPE toggle buttons
   const filterDiv=wrap.querySelector('#rpef_'+lift.key);
+  const rpeBtns=[];
+  // "全選" button
+  const allBtn=document.createElement('button');
+  allBtn.className='rpe-btn';allBtn.textContent='全選';
+  allBtn.style.color='var(--text-mid)';
+  allBtn.onclick=()=>{
+    const anyHidden=rpeBtns.some(b=>b._idx!==undefined&&!ch.isDatasetVisible(b._idx));
+    rpeBtns.forEach(b=>{
+      if(b._idx===undefined)return;
+      if(anyHidden){ch.show(b._idx);b.classList.remove('off');}
+      else{ch.hide(b._idx);b.classList.add('off');}
+    });
+    allBtn.textContent=anyHidden?'全選':'全取消';
+  };
+  filterDiv.appendChild(allBtn);
   ds.forEach((d,i)=>{
     if(!d.label.startsWith('RPE '))return;
     const btn=document.createElement('button');
     btn.className='rpe-btn';btn.textContent=d.label;
     btn.style.color=d.borderColor;
+    btn._idx=i;
     btn.onclick=()=>{
-      const ds2=ch.data.datasets[i];
-      ds2.hidden=!ds2.hidden;
-      btn.classList.toggle('off',ds2.hidden);
-      ch.update();
+      if(ch.isDatasetVisible(i)){ch.hide(i);btn.classList.add('off');}
+      else{ch.show(i);btn.classList.remove('off');}
+      // sync 全選 label
+      const anyHidden2=rpeBtns.some(b=>b._idx!==undefined&&!ch.isDatasetVisible(b._idx));
+      allBtn.textContent=anyHidden2?'全選':'全取消';
     };
+    rpeBtns.push(btn);
     filterDiv.appendChild(btn);
   });
 
