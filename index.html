@@ -7,10 +7,10 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root{
-    --bg:#0a0a0a; --card:#111111; --card2:#0f0f0f; --ink:#e8c97f; --mut:#666666;
-    --line:#2a2a2a; --accent:#ffb000;
+    --bg:#0c0b11; --card:#131020; --card2:#0f0e15; --ink:#c4bdd4; --mut:#5a5468;
+    --line:#201d2e; --accent:#9580cc; --border:#332f50;
     --squat:#4363d8; --bench:#3cb44b; --dead:#e6194B;
-    --up:#00cc66; --flat:#ffb000; --down:#ff4444;
+    --up:#4ade80; --flat:#a78bfa; --down:#f87171;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
@@ -32,7 +32,7 @@
        cursor:pointer;font-size:13px;letter-spacing:.5px}
   button:hover{background:var(--accent);color:#000}
   #status{font-size:12px;color:var(--mut)}
-  .card{background:var(--card);border:1px solid var(--accent);padding:18px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--border);padding:18px;margin-bottom:18px}
   .card h2{margin:0 0 4px;font-size:13px;color:var(--accent);letter-spacing:.5px;font-weight:700}
   .card h2::before{content:'[ '}
   .card h2::after{content:' ]'}
@@ -291,7 +291,7 @@ function renderLift(lift,recs,labels,xmin,xmax){
   const byR=bestPerWeekRPE(recs,lift.set);
   const ds=Object.keys(byR).map(rk=>({label:'RPE '+(+rk),data:byR[rk],
      borderColor:RPE_COLORS[rk]||'#888',backgroundColor:RPE_COLORS[rk]||'#888',
-     pointRadius:5,pointBorderColor:'rgba(0,0,0,.4)',borderWidth:2,tension:.15,showLine:true}));
+     pointRadius:ptSz(5),pointBorderColor:'rgba(0,0,0,.4)',borderWidth:2,tension:.15,showLine:true}));
   const e=e1Series(recs,lift.set);
   const xs=e.map(p=>p.x),ys=e.map(p=>p.y);const b1=slope(xs,ys),b0=b1!=null?intercept(xs,ys,b1):null;
   if(b1!=null){const x0=Math.min(...xs),x1=Math.max(...xs);
@@ -299,7 +299,7 @@ function renderLift(lift,recs,labels,xmin,xmax){
       data:[{x:x0,y:b0+b1*x0},{x:x1,y:b0+b1*x1}],borderColor:'#ff3b3b',borderDash:[7,4],
       borderWidth:2.4,pointRadius:0,fill:false});
     ds.push({label:'e1RM 點',data:e,borderColor:'rgba(255,80,80,.35)',
-      backgroundColor:'rgba(255,80,80,.35)',pointRadius:2.5,showLine:false});}
+      backgroundColor:'rgba(255,80,80,.35)',pointRadius:ptSz(3),showLine:false});}
 
   // 標出本區間「實際舉起的最重一次」(PR)，用金色星星讓它明顯
   let pr=null; recs.filter(r=>lift.set.has(r.exn)&&r.w&&r.rpe).forEach(r=>{if(!pr||r.w>pr.w)pr=r;});
@@ -341,13 +341,14 @@ function renderLift(lift,recs,labels,xmin,xmax){
 }
 function avg(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;}
 
+function ptSz(n){return window.innerWidth<=768?Math.max(2,n-2):n;}
 function baseOpts(labels,ytitle,xmin,xmax){return{responsive:true,maintainAspectRatio:false,
   parsing:false,interaction:{mode:'nearest'},
-  scales:{x:{type:'linear',min:xmin||1,max:xmax||labels.length,ticks:{stepSize:1,color:'#9aa7b4',
+  scales:{x:{type:'linear',min:xmin||1,max:xmax||labels.length,ticks:{stepSize:1,color:'#7a7488',
       callback:v=>labels[v-1]||v,maxRotation:90,minRotation:90,font:{size:9}},
-      grid:{color:'#2d3742'}},
-    y:{title:{display:true,text:ytitle,color:'#9aa7b4'},ticks:{color:'#9aa7b4'},grid:{color:'#2d3742'}}},
-  plugins:{legend:{labels:{color:'#cdd7e0',boxWidth:12,font:{size:10}}}}};}
+      grid:{color:'#201d2e'}},
+    y:{title:{display:true,text:ytitle,color:'#7a7488'},ticks:{color:'#7a7488'},grid:{color:'#201d2e'}}},
+  plugins:{legend:{labels:{color:'#c4bdd4',boxWidth:12,font:{size:10}}}}};}
 
 function renderTotal(recs,labels,xmin,xmax){
   // best e1RM per lift per week, carry-forward, sum
@@ -360,7 +361,7 @@ function renderTotal(recs,labels,xmin,xmax){
     if(LIFTS.every(l=>carry[l.key]!=null))pts.push({x:t,y:LIFTS.reduce((s,l)=>s+carry[l.key],0)});}
   const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y);const b1=slope(xs,ys),b0=b1!=null?intercept(xs,ys,b1):null;
   const ds=[{label:'SBD Total e1RM',data:pts,borderColor:'#f5a623',backgroundColor:'#f5a623',
-     pointRadius:4,borderWidth:2.6,tension:.15}];
+     pointRadius:ptSz(4),borderWidth:2.6,tension:.15}];
   if(b1!=null){const x0=Math.min(...xs),x1=Math.max(...xs);
     ds.push({label:`趨勢 (${b1>=0?'+':''}${b1.toFixed(2)}/週)`,data:[{x:x0,y:b0+b1*x0},{x:x1,y:b0+b1*x1}],
       borderColor:'#ffd479',borderDash:[7,4],borderWidth:2,pointRadius:0});}
@@ -401,7 +402,7 @@ function renderRpeBlow(recs,labels,xmin,xmax){
 
   const datasets=[];
   // Reference diagonal y=x
-  datasets.push({label:'計畫線（實際＝計畫）',data:[{x:5,y:5},{x:10.5,y:10.5}],
+  datasets.push({label:'計畫線（實際＝計畫）',data:[{x:5,y:5},{x:10,y:10}],
     type:'line',borderColor:'#555',borderDash:[6,4],borderWidth:1.5,pointRadius:0,showLine:true});
 
   LIFTS.forEach(l=>{
@@ -410,20 +411,20 @@ function renderRpeBlow(recs,labels,xmin,xmax){
     const ok=pts.filter(r=>r.rpe<=r.prpe).map(r=>({x:r.prpe,y:r.rpe}));
     const blow=pts.filter(r=>r.rpe>r.prpe).map(r=>({x:r.prpe,y:r.rpe}));
     if(ok.length)datasets.push({label:l.zh+' 達標',data:ok,type:'scatter',
-      backgroundColor:l.color+'55',borderColor:l.color,pointRadius:5,pointBorderWidth:1});
+      backgroundColor:l.color+'55',borderColor:l.color,pointRadius:ptSz(5),pointBorderWidth:1});
     if(blow.length)datasets.push({label:l.zh+' 爆掉 ⚡',data:blow,type:'scatter',
-      backgroundColor:l.color,borderColor:'#fff',pointRadius:7,pointBorderWidth:1.5});
+      backgroundColor:l.color,borderColor:'#fff',pointRadius:ptSz(6),pointBorderWidth:1.5});
   });
 
   if(CH.blow)CH.blow.destroy();
   CH.blow=new Chart(document.getElementById('c_blow'),{type:'scatter',data:{datasets},
     options:{responsive:true,maintainAspectRatio:false,
       scales:{
-        x:{title:{display:true,text:'計畫 RPE',color:'#9aa7b4'},min:5,max:10.5,
-           ticks:{color:'#9aa7b4',stepSize:0.5},grid:{color:'#2d3742'}},
-        y:{title:{display:true,text:'實際 RPE',color:'#9aa7b4'},min:5,max:10.5,
-           ticks:{color:'#9aa7b4',stepSize:0.5},grid:{color:'#2d3742'}}},
-      plugins:{legend:{labels:{color:'#cdd7e0',boxWidth:12,font:{size:10}}}}}});
+        x:{title:{display:true,text:'計畫 RPE',color:'#7a7488'},min:5,max:10,
+           ticks:{color:'#7a7488',stepSize:0.5},grid:{color:'#201d2e'}},
+        y:{title:{display:true,text:'實際 RPE',color:'#7a7488'},min:5,max:10,
+           ticks:{color:'#7a7488',stepSize:0.5},grid:{color:'#201d2e'}}},
+      plugins:{legend:{labels:{color:'#c4bdd4',boxWidth:12,font:{size:10}}}}}});
 
   // Per-lift stats
   let html='';
