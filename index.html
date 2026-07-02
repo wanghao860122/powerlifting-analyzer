@@ -86,7 +86,7 @@
 
   /* ── Grid ── */
   .grid{display:grid;grid-template-columns:1.85fr 1fr;gap:16px;align-items:start}
-  .chartbox{position:relative;height:340px}
+  .chartbox{position:relative;height:420px}
 
   /* ── Explain ── */
   .explain{
@@ -138,6 +138,18 @@
     overflow-x:auto;white-space:pre;margin:4px 0
   }
 
+  /* ── RPE toggle buttons ── */
+  .rpe-filter{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+  .rpe-btn{
+    padding:3px 9px;font-size:11px;font-family:'JetBrains Mono',monospace;
+    border:1px solid currentColor;background:transparent;cursor:pointer;
+    letter-spacing:.3px;transition:opacity .15s;
+    /* Override mobile full-width rule */
+    width:auto!important;flex:none!important
+  }
+  .rpe-btn.off{opacity:.25}
+  .rpe-btn:hover{background:rgba(255,255,255,.06)}
+
   /* ── Mobile ── */
   @media(max-width:768px){
     header{padding:11px 14px}
@@ -153,12 +165,12 @@
     }
     input[type=number]{width:100%;font-size:16px;padding:10px 12px}
     select{font-size:16px;padding:9px 10px;width:100%}
-    button{width:100%;padding:11px;font-size:13px;text-align:center}
+    button:not(.rpe-btn){width:100%;padding:11px;font-size:13px;text-align:center}
     #rangebar{flex-direction:row;flex-wrap:wrap}
     #rangebar select{width:auto;flex:1;min-width:80px}
     #rangebar button{width:auto;flex:none}
     .grid{grid-template-columns:1fr}
-    .chartbox{height:220px}
+    .chartbox{height:280px}
     .card{padding:12px 14px}
     .explain{padding:10px 12px}
     .kpi div{min-width:78px;padding:7px 10px}
@@ -427,7 +439,7 @@ function renderLift(lift,recs,labels,xmin,xmax){
     c.innerHTML=`<h2>${lift.zh}</h2><div class="tag">在此表找不到含「${lift.kw}」的動作，略過。</div>`;
     document.getElementById('lifts').appendChild(c);return;}
   const byR=bestPerWeekRPE(recs,lift.set);
-  const ds=Object.keys(byR).map(rk=>({label:'RPE '+(+rk),data:byR[rk],
+  const ds=Object.keys(byR).sort((a,b)=>+a-+b).map(rk=>({label:'RPE '+(+rk),data:byR[rk],
      borderColor:RPE_COLORS[rk]||'#888',backgroundColor:RPE_COLORS[rk]||'#888',
      pointRadius:ptSz(5),pointBorderColor:'rgba(0,0,0,.4)',borderWidth:2,tension:.15,showLine:true}));
   const e=e1Series(recs,lift.set);
@@ -451,6 +463,7 @@ function renderLift(lift,recs,labels,xmin,xmax){
   const wrap=document.createElement('div');wrap.className='card';
   wrap.innerHTML=`<h2>${lift.disp||lift.zh}</h2>
     <div class="tag">每條彩色線＝一個 RPE，同週同 RPE 取最重一組；紅虛線＝估計 1RM 趨勢</div>
+    <div class="rpe-filter" id="rpef_${lift.key}"></div>
     <div class="grid">
       <div class="chartbox"><canvas></canvas></div>
       <div class="explain">
@@ -468,7 +481,23 @@ function renderLift(lift,recs,labels,xmin,xmax){
     </div>`;
   document.getElementById('lifts').appendChild(wrap);
   const ctx=wrap.querySelector('canvas');
-  CH['lift_'+lift.key]=new Chart(ctx,{type:'line',data:{datasets:ds},options:baseOpts(labels,'重量 (kg)',xmin,xmax)});
+  const ch=CH['lift_'+lift.key]=new Chart(ctx,{type:'line',data:{datasets:ds},options:baseOpts(labels,'重量 (kg)',xmin,xmax)});
+
+  // RPE toggle buttons
+  const filterDiv=wrap.querySelector('#rpef_'+lift.key);
+  ds.forEach((d,i)=>{
+    if(!d.label.startsWith('RPE '))return;
+    const btn=document.createElement('button');
+    btn.className='rpe-btn';btn.textContent=d.label;
+    btn.style.color=d.borderColor;
+    btn.onclick=()=>{
+      const ds2=ch.data.datasets[i];
+      ds2.hidden=!ds2.hidden;
+      btn.classList.toggle('off',ds2.hidden);
+      ch.update();
+    };
+    filterDiv.appendChild(btn);
+  });
 
   // per-RPE mini table
   const rows=Object.keys(byR).map(rk=>{const pts=byR[rk];const s=slope(pts.map(p=>p.x),pts.map(p=>p.y));
