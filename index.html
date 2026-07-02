@@ -80,6 +80,13 @@
   <div class="bar">
     <input id="url" type="text" placeholder="貼上 Google Sheets 網址或 ID">
     <button onclick="run()">分析</button>
+    <span style="color:var(--mut);padding:0 2px">｜</span>
+    <input id="bw" type="number" placeholder="體重 kg" min="30" max="250" step="0.1"
+      style="width:88px;flex:none" oninput="updateCoeffDisplay()">
+    <select id="sex" onchange="updateCoeffDisplay()">
+      <option value="m">男 / M</option>
+      <option value="f">女 / F</option>
+    </select>
     <span id="status">準備就緒</span>
   </div>
 
@@ -108,6 +115,7 @@
         <p>某項當週沒練時，沿用<b>最近一次</b>的最佳 e1RM（carry-forward），讓曲線連續。</p>
         <div id="kpi_total" class="kpi"></div>
         <p class="note" id="proj_total"></p>
+        <div id="kpi_coeff" class="kpi" style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px"></div>
       </div>
     </div>
   </div>
@@ -167,6 +175,11 @@
       <p>當某項 e1RM 斜率接近 0（|斜率|&lt;0.1）判定為<b>平台期</b>，代表需要調整訓練變數（頻率/量/強度/技術）。</p>
       <h3 style="margin-top:14px">6 · RPE 爆掉偵測</h3>
       <p>讀取課表 <code>Intensity</code> 欄的計畫 RPE（如 <code>Rpe6</code>），與你填入的實際 RPE 比較。實際 RPE &gt; 計畫 RPE 即視為「爆掉」。頻繁爆掉（&gt;40%）以紅色提示，偶爾爆掉（20–40%）以黃色提示。</p>
+      <h3 style="margin-top:14px">7 · Wilks &amp; DOTS 係數（體重別換算）</h3>
+      <p>輸入體重後，依比賽標準公式把 SBD Total 換算成體重別積分，讓不同量級可以比較實力。</p>
+      <div class="formula">Wilks = Total × (500 ÷ Σᵢ aᵢ·BW^i)　← 傳統通用指標
+DOTS  = Total × (500 ÷ Σᵢ bᵢ·BW^i)　← IPF 現行標準</div>
+      <p>兩個公式皆為多項式逼近，男女係數不同。DOTS 為 2019 年 IPF 取代 Wilks 的新標準。</p>
     </div>
     <details><summary>展開：使用的 RTS RPE 百分比表（%1RM）</summary>
       <div id="rpetable"></div>
@@ -194,6 +207,36 @@ const PCT={}; for(const r in RAW){PCT[r]=RAW[r].map(v=>v/47.5);}
 function pct(rpe,reps){rpe=Math.max(5,Math.min(10,Math.round(rpe*2)/2));reps=Math.max(1,Math.min(8,Math.round(reps)));
   const row=PCT[rpe]; return row?row[reps-1]:null;}
 function e1rm(w,reps,rpe){const p=pct(rpe,reps);return (w&&reps&&rpe&&p)?w/p:null;}
+
+// ---- Wilks & DOTS coefficients (competition standard) ----
+const WILKS_M=[-216.0475144,16.2606339,-0.002388645,-0.00113732,7.01863e-6,-1.291e-8];
+const WILKS_F=[594.31747775582,-27.23842536447,0.82112226871,-0.00930733913,4.731582e-5,-9.054e-8];
+const DOTS_M=[-307.75076,24.0900756,-0.1918759221,7.391293e-4,-1.093e-6];
+const DOTS_F=[-57.96288,13.6175032,-0.1126655495,5.158568e-4,-1.0706e-6];
+function polyVal(bw,c){let d=0;c.forEach((ci,i)=>d+=ci*Math.pow(bw,i));return d;}
+function wilks(total,bw,sex){
+  if(!total||!bw||bw<30||bw>250)return null;
+  return total*(500/polyVal(bw,sex==='f'?WILKS_F:WILKS_M));}
+function dots(total,bw,sex){
+  if(!total||!bw||bw<30||bw>250)return null;
+  return total*(500/polyVal(bw,sex==='f'?DOTS_F:DOTS_M));}
+function getBW(){return +document.getElementById('bw').value||null;}
+function getSex(){return document.getElementById('sex').value;}
+function updateCoeffDisplay(){
+  const el=document.getElementById('kpi_coeff');
+  if(!el)return;
+  const bw=getBW(),sex=getSex();
+  if(!bw||!DATA.totals||!DATA.totals.length){el.innerHTML='';return;}
+  const valid=DATA.totals.filter(v=>v!=null);
+  if(!valid.length){el.innerHTML='';return;}
+  const peak=Math.max(...valid),last=valid[valid.length-1];
+  const wl=wilks(last,bw,sex),wp=wilks(peak,bw,sex);
+  const dl=dots(last,bw,sex),dp=dots(peak,bw,sex);
+  const sexLbl=sex==='f'?'女':'男';
+  el.innerHTML=`<div><b>${wl?wl.toFixed(1):'—'}</b><span>Wilks 目前 (${sexLbl}/${bw}kg)</span></div>
+    <div><b>${wp?wp.toFixed(1):'—'}</b><span>Wilks 巔峰</span></div>
+    <div><b>${dl?dl.toFixed(1):'—'}</b><span>DOTS 目前</span></div>
+    <div><b>${dp?dp.toFixed(1):'—'}</b><span>DOTS 巔峰</span></div>`;}
 
 function parsePlannedRpe(v){
   if(v==null)return null;
@@ -367,10 +410,12 @@ function renderTotal(recs,labels,xmin,xmax){
       borderColor:'#ffd479',borderDash:[7,4],borderWidth:2,pointRadius:0});}
   CH.total=new Chart(document.getElementById('c_total'),{type:'line',data:{datasets:ds},options:baseOpts(labels,'總和 e1RM (kg)',lo,hi)});
   const first=avg(ys.slice(0,3)),last=avg(ys.slice(-3));
+  DATA.totals=ys;
   document.getElementById('kpi_total').innerHTML=
     `<div><b>${last?last.toFixed(0):'—'}</b><span>目前總和 kg</span></div>
      <div><b>${b1!=null?(b1>=0?'+':'')+b1.toFixed(2):'—'}</b><span>kg/週</span></div>
      <div><b>${first&&last?((last-first)/first*100>=0?'+':'')+((last-first)/first*100).toFixed(1)+'%':'—'}</b><span>總變化</span></div>`;
+  updateCoeffDisplay();
   if(b1!=null)document.getElementById('proj_total').innerHTML=
     `若維持趨勢，4 週後預估總和 ≈ <b>${(b0+b1*(Math.max(...xs)+4)).toFixed(0)} kg</b>。`;
 }
