@@ -110,6 +110,23 @@
     </div>
   </div>
 
+  <!-- RPE 爆掉偵測 -->
+  <div class="card" id="blow_card" style="display:none">
+    <h2>⚡ RPE 爆掉偵測 · Exceeded-Plan Tracker</h2>
+    <div class="tag">教練計畫的 RPE（Intensity 欄）vs 你實際填的 RPE——點落在對角線<b>上方</b>代表爆掉（比計畫更費力）</div>
+    <div class="grid">
+      <div class="chartbox"><canvas id="c_blow"></canvas></div>
+      <div class="explain">
+        <h3>怎麼看？</h3>
+        <p>X 軸＝<b>計畫 RPE</b>（課表要求），Y 軸＝<b>實際 RPE</b>（你記錄的感受）。<br>
+        <span style="opacity:.7">●</span> 達標（實際 ≤ 計畫）<br>
+        <span style="color:#f87171">●</span> 爆掉（實際 &gt; 計畫，比預期更喘）</p>
+        <p>偶爾爆掉是正常的，常常爆掉可能代表課表強度低估，或累積疲勞增加。</p>
+        <div id="blow_stats" style="margin-top:10px;font-size:13px;line-height:1.8"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Per-lift charts injected here -->
   <div id="lifts"></div>
 
@@ -129,6 +146,8 @@
       <p>用 e1RM 回歸線往後延伸 4 週，估計若維持現況的預期值：<code>預估 = 目前趨勢值 + 斜率 × 4</code>。僅供參考，非保證。</p>
       <h3 style="margin-top:14px">5 · 平台期偵測</h3>
       <p>當某項 e1RM 斜率接近 0（|斜率|&lt;0.1）判定為<b>平台期</b>，代表需要調整訓練變數（頻率/量/強度/技術）。</p>
+      <h3 style="margin-top:14px">6 · RPE 爆掉偵測</h3>
+      <p>讀取課表 <code>Intensity</code> 欄的計畫 RPE（如 <code>Rpe6</code>），與你填入的實際 RPE 比較。實際 RPE &gt; 計畫 RPE 即視為「爆掉」。頻繁爆掉（&gt;40%）以紅色提示，偶爾爆掉（20–40%）以黃色提示。</p>
     </div>
     <details><summary>展開：使用的 RTS RPE 百分比表（%1RM）</summary>
       <div id="rpetable"></div>
@@ -156,6 +175,14 @@ const PCT={}; for(const r in RAW){PCT[r]=RAW[r].map(v=>v/47.5);}
 function pct(rpe,reps){rpe=Math.max(5,Math.min(10,Math.round(rpe*2)/2));reps=Math.max(1,Math.min(8,Math.round(reps)));
   const row=PCT[rpe]; return row?row[reps-1]:null;}
 function e1rm(w,reps,rpe){const p=pct(rpe,reps);return (w&&reps&&rpe&&p)?w/p:null;}
+
+function parsePlannedRpe(v){
+  if(v==null)return null;
+  const m=String(v).match(/rpe\s*(\d+(?:[.,]\d+)?)/i);
+  if(!m)return null;
+  const n=parseFloat(m[1].replace(',','.'));
+  return(n>=1&&n<=10.5)?n:null;
+}
 
 const RPE_COLORS={5:'#ff6b6b',5.5:'#ffa94d',6:'#ffe066',6.5:'#a9e34b',7:'#4dabf7',
   7.5:'#b197fc',8:'#f783ac',8.5:'#63e6be',9:'#e599f7',9.5:'#66d9e8',10:'#ffffff'};
@@ -215,7 +242,8 @@ function parse(grid){
       let w=grid[r][wt]; w=(typeof w==='number'&&w>0&&w<1000)?w:null;
       let rpe=grid[r][rp]; rpe=(typeof rpe==='number'&&rpe>=1&&rpe<=10.5)?rpe:null; // 過濾誤植的日期/怪值
       const reps=parseReps(grid[r][vol]);
-      recs.push({t:ti+1,label:wk.label,exn:titleCase(exs),w,rpe,reps,
+      const prpe=parsePlannedRpe(grid[r][wk.i+2]);
+      recs.push({t:ti+1,label:wk.label,exn:titleCase(exs),w,rpe,reps,prpe,
         e:(w&&rpe&&reps)?e1rm(w,reps,rpe):null});
     }
   });
@@ -346,6 +374,59 @@ function renderBar(recs){
       plugins:{legend:{labels:{color:'#cdd7e0'}}}}});
 }
 
+function renderRpeBlow(recs,labels,xmin,xmax){
+  const card=document.getElementById('blow_card');
+  const valid=recs.filter(r=>r.prpe!=null&&r.rpe!=null&&r.w);
+  if(valid.length<3){card.style.display='none';return;}
+  card.style.display='';
+
+  const datasets=[];
+  // Reference diagonal y=x
+  datasets.push({label:'計畫線（實際＝計畫）',data:[{x:5,y:5},{x:10.5,y:10.5}],
+    type:'line',borderColor:'#555',borderDash:[6,4],borderWidth:1.5,pointRadius:0,showLine:true});
+
+  LIFTS.forEach(l=>{
+    if(!l.set||!l.set.size)return;
+    const pts=valid.filter(r=>l.set.has(r.exn));
+    const ok=pts.filter(r=>r.rpe<=r.prpe).map(r=>({x:r.prpe,y:r.rpe}));
+    const blow=pts.filter(r=>r.rpe>r.prpe).map(r=>({x:r.prpe,y:r.rpe}));
+    if(ok.length)datasets.push({label:l.zh+' 達標',data:ok,type:'scatter',
+      backgroundColor:l.color+'55',borderColor:l.color,pointRadius:5,pointBorderWidth:1});
+    if(blow.length)datasets.push({label:l.zh+' 爆掉 ⚡',data:blow,type:'scatter',
+      backgroundColor:l.color,borderColor:'#fff',pointRadius:7,pointBorderWidth:1.5});
+  });
+
+  if(CH.blow)CH.blow.destroy();
+  CH.blow=new Chart(document.getElementById('c_blow'),{type:'scatter',data:{datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      scales:{
+        x:{title:{display:true,text:'計畫 RPE',color:'#9aa7b4'},min:5,max:10.5,
+           ticks:{color:'#9aa7b4',stepSize:0.5},grid:{color:'#2d3742'}},
+        y:{title:{display:true,text:'實際 RPE',color:'#9aa7b4'},min:5,max:10.5,
+           ticks:{color:'#9aa7b4',stepSize:0.5},grid:{color:'#2d3742'}}},
+      plugins:{legend:{labels:{color:'#cdd7e0',boxWidth:12,font:{size:10}}}}}});
+
+  // Per-lift stats
+  let html='';
+  LIFTS.forEach(l=>{
+    if(!l.set||!l.set.size)return;
+    const pts=valid.filter(r=>l.set.has(r.exn));
+    if(!pts.length)return;
+    const blow=pts.filter(r=>r.rpe>r.prpe);
+    const rate=(blow.length/pts.length*100).toFixed(0);
+    const avgEx=blow.length?(blow.reduce((s,r)=>s+(r.rpe-r.prpe),0)/blow.length).toFixed(1):'—';
+    const maxEx=blow.length?Math.max(...blow.map(r=>r.rpe-r.prpe)).toFixed(1):'—';
+    const clr=blow.length/pts.length>0.4?'#f87171':blow.length/pts.length>0.2?'#fbbf24':'#4ade80';
+    html+=`<div style="border-left:3px solid ${l.color};padding-left:8px;margin-bottom:8px">
+      <b>${l.zh}</b>：${pts.length} 組計畫 RPE，爆掉
+      <b style="color:${clr}">${blow.length} 組（${rate}%）</b>
+      ${blow.length?`／平均超出 <b>+${avgEx}</b> RPE，最多超出 +${maxEx}`:''}
+    </div>`;
+  });
+  document.getElementById('blow_stats').innerHTML=html||
+    '<span style="color:var(--mut)">此區間無計畫 RPE 資料（Intensity 欄需填 Rpe6 格式）</span>';
+}
+
 function renderRpeTable(){
   let h='<table><tr><th>RPE\\reps</th>'+[1,2,3,4,5,6,7,8].map(r=>'<th>'+r+'</th>').join('')+'</tr>';
   Object.keys(PCT).sort((a,b)=>b-a).forEach(rp=>{h+='<tr><td>'+rp+'</td>'+PCT[rp].map(v=>'<td>'+(v*100).toFixed(1)+'%</td>').join('')+'</tr>';});
@@ -417,6 +498,7 @@ function analyze(lo,hi){
   const fr=DATA.recs.filter(r=>r.t>=lo&&r.t<=hi); // all analysis reflects this interval
   renderTotal(fr,DATA.labels,lo,hi);
   renderBar(fr);
+  renderRpeBlow(fr,DATA.labels,lo,hi);
   LIFTS.forEach(l=>renderLift(l,fr,DATA.labels,lo,hi));
   const n=fr.filter(r=>r.w&&r.rpe).length;
   document.getElementById('rangeinfo').textContent=
