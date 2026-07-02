@@ -159,10 +159,20 @@ function e1rm(w,reps,rpe){const p=pct(rpe,reps);return (w&&reps&&rpe&&p)?w/p:nul
 
 const RPE_COLORS={5:'#ff6b6b',5.5:'#ffa94d',6:'#ffe066',6.5:'#a9e34b',7:'#4dabf7',
   7.5:'#b197fc',8:'#f783ac',8.5:'#63e6be',9:'#e599f7',9.5:'#66d9e8',10:'#ffffff'};
-const LIFTS=[{key:'Squat',name:'深蹲 Squat',match:'Squat',color:getVar('--squat')},
-  {key:'Bench',name:'臥推 Bench (Pause)',match:'Pause Bench',color:getVar('--bench')},
-  {key:'Deadlift',name:'硬舉 Deadlift',match:'Deadlift',color:getVar('--dead')}];
+const LIFTS=[{key:'Squat',zh:'深蹲',kw:['squat'],color:getVar('--squat')},
+  {key:'Bench',zh:'臥推',kw:['bench'],color:getVar('--bench')},
+  {key:'Deadlift',zh:'硬舉',kw:['deadlift','dead'],color:getVar('--dead')}];
 function getVar(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+// 動作名含任一關鍵字即視為該項；合併槓鈴比賽變化式(low bar/pause/comp/conventional…)，只排除輔助/器械動作。
+const ACCESSORY=/machine|dumbbell|\bdb\b|goblet|leg ?press|cable|\bhack\b|\brdl\b|romanian|good ?morning|lunge|split ?squat|bulgarian|leg ?curl|leg ?ext|calf|tempo|\brow\b|curl|\bdip|pull.?down|pulldown|pull.?up|chin|extension|raise|\bfly\b|pushdown|face ?pull|shrug|overhead|\bohp\b|chest press|dead ?bug|dead ?hang|glute|hip thrust|plank|abs?\b|core/i;
+function liftNames(recs,kws){
+  const cnt={};recs.forEach(r=>{const n=r.exn||'';const nl=n.toLowerCase();
+    if(kws.some(k=>nl.includes(k)))cnt[n]=(cnt[n]||0)+((r.w&&r.rpe)?1:0);});
+  const names=Object.keys(cnt);if(!names.length)return [];
+  const keep=names.filter(n=>!ACCESSORY.test(n));
+  if(keep.length)return keep;
+  names.sort((a,b)=>cnt[b]-cnt[a]);return [names[0]]; // 全是輔助動作時，退而取資料最多的
+}
 
 let CH={}; // chart instances
 let DATA={recs:[],labels:[],nW:0}; // parsed sheet (all weeks)
@@ -213,25 +223,29 @@ function parse(grid){
 }
 
 /* ---------- rendering ---------- */
-function bestPerWeekRPE(recs,match){
+function bestPerWeekRPE(recs,set){
   const b={};
-  recs.filter(r=>r.exn===match&&r.w&&r.rpe).forEach(r=>{
+  recs.filter(r=>set.has(r.exn)&&r.w&&r.rpe).forEach(r=>{
     const rk=Math.round(r.rpe*2)/2;const k=r.t+'|'+rk;
     if(!(k in b)||r.w>b[k].w)b[k]={t:r.t,rk,w:r.w};});
   const byR={};Object.values(b).forEach(o=>{(byR[o.rk]=byR[o.rk]||[]).push({x:o.t,y:o.w});});
   for(const k in byR)byR[k].sort((a,b)=>a.x-b.x);
   return byR;
 }
-function e1Series(recs,match){return recs.filter(r=>r.exn===match&&r.e).map(r=>({x:r.t,y:r.e})).sort((a,b)=>a.x-b.x);}
+function e1Series(recs,set){return recs.filter(r=>set.has(r.exn)&&r.e).map(r=>({x:r.t,y:r.e})).sort((a,b)=>a.x-b.x);}
 
 function verdict(sl){if(sl>0.15)return['↑ 進步','up'];if(sl<-0.15)return['↓ 退步','down'];return['→ 停滯','flat'];}
 
 function renderLift(lift,recs,labels,xmin,xmax){
-  const byR=bestPerWeekRPE(recs,lift.match);
+  if(!lift.set||!lift.set.size){
+    const c=document.createElement('div');c.className='card';
+    c.innerHTML=`<h2>${lift.zh}</h2><div class="tag">在此表找不到含「${lift.kw}」的動作，略過。</div>`;
+    document.getElementById('lifts').appendChild(c);return;}
+  const byR=bestPerWeekRPE(recs,lift.set);
   const ds=Object.keys(byR).map(rk=>({label:'RPE '+(+rk),data:byR[rk],
      borderColor:RPE_COLORS[rk]||'#888',backgroundColor:RPE_COLORS[rk]||'#888',
      pointRadius:5,pointBorderColor:'rgba(0,0,0,.4)',borderWidth:2,tension:.15,showLine:true}));
-  const e=e1Series(recs,lift.match);
+  const e=e1Series(recs,lift.set);
   const xs=e.map(p=>p.x),ys=e.map(p=>p.y);const b1=slope(xs,ys),b0=b1!=null?intercept(xs,ys,b1):null;
   if(b1!=null){const x0=Math.min(...xs),x1=Math.max(...xs);
     ds.push({label:`e1RM 趨勢 (${b1>=0?'+':''}${b1.toFixed(2)}/週)`,
@@ -241,7 +255,7 @@ function renderLift(lift,recs,labels,xmin,xmax){
       backgroundColor:'rgba(255,80,80,.35)',pointRadius:2.5,showLine:false});}
 
   // 標出本區間「實際舉起的最重一次」(PR)，用金色星星讓它明顯
-  let pr=null; recs.filter(r=>r.exn===lift.match&&r.w&&r.rpe).forEach(r=>{if(!pr||r.w>pr.w)pr=r;});
+  let pr=null; recs.filter(r=>lift.set.has(r.exn)&&r.w&&r.rpe).forEach(r=>{if(!pr||r.w>pr.w)pr=r;});
   if(pr)ds.push({label:`最重 ${pr.w}kg ★`,data:[{x:pr.t,y:pr.w}],borderColor:'#ffd43b',
     backgroundColor:'#ffd43b',pointStyle:'star',pointRadius:13,pointHoverRadius:15,showLine:false});
 
@@ -250,7 +264,7 @@ function renderLift(lift,recs,labels,xmin,xmax){
   const dpc=first?((last-first)/first*100):0;
 
   const wrap=document.createElement('div');wrap.className='card';
-  wrap.innerHTML=`<h2>${lift.name}</h2>
+  wrap.innerHTML=`<h2>${lift.disp||lift.zh}</h2>
     <div class="tag">每條彩色線＝一個 RPE，同週同 RPE 取最重一組；紅虛線＝估計 1RM 趨勢</div>
     <div class="grid">
       <div class="chartbox"><canvas></canvas></div>
@@ -292,7 +306,7 @@ function renderTotal(recs,labels,xmin,xmax){
   // best e1RM per lift per week, carry-forward, sum
   const nW=labels.length; const lo=xmin||1, hi=xmax||nW;
   const bestByWeek={}; LIFTS.forEach(l=>bestByWeek[l.key]=Array(nW+1).fill(null));
-  LIFTS.forEach(l=>{recs.filter(r=>r.exn===l.match&&r.e).forEach(r=>{
+  LIFTS.forEach(l=>{recs.filter(r=>l.set&&l.set.has(r.exn)&&r.e).forEach(r=>{
     if(bestByWeek[l.key][r.t]==null||r.e>bestByWeek[l.key][r.t])bestByWeek[l.key][r.t]=r.e;});});
   const carry={},pts=[];LIFTS.forEach(l=>carry[l.key]=null);
   for(let t=lo;t<=hi;t++){LIFTS.forEach(l=>{if(bestByWeek[l.key][t]!=null)carry[l.key]=bestByWeek[l.key][t];});
@@ -318,10 +332,10 @@ function renderBar(recs){
   // collect union of RPEs with n>=4 across lifts
   const rpeSet=new Set();
   const data={};LIFTS.forEach(l=>{data[l.key]={};
-    const d={};recs.filter(r=>r.exn===l.match&&r.w&&r.rpe).forEach(r=>{const rk=Math.round(r.rpe*2)/2;(d[rk]=d[rk]||[]).push({x:r.t,y:r.w});});
+    const d={};recs.filter(r=>l.set&&l.set.has(r.exn)&&r.w&&r.rpe).forEach(r=>{const rk=Math.round(r.rpe*2)/2;(d[rk]=d[rk]||[]).push({x:r.t,y:r.w});});
     for(const rk in d){if(d[rk].length>=4){const s=slope(d[rk].map(p=>p.x),d[rk].map(p=>p.y));data[l.key][rk]=s;rpeSet.add(+rk);}}});
   const rpes=[...rpeSet].sort((a,b)=>a-b);
-  const barDs=LIFTS.map(l=>({label:l.name.split(' ')[0],
+  const barDs=LIFTS.map(l=>({label:l.zh,
      data:rpes.map(rk=>data[l.key][rk]!=null?+data[l.key][rk].toFixed(3):null),
      backgroundColor:l.color,borderColor:'#111',borderWidth:1}));
   CH.bar=new Chart(document.getElementById('c_bar'),{type:'bar',
@@ -366,6 +380,8 @@ async function run(){
       allRecs=allRecs.concat(recs);
     }
     if(!allLabels.length)throw new Error('找不到 Cycle 分頁，請確認分頁名為 Cycle1 / Cycle2 …且為此課表格式');
+    LIFTS.forEach(l=>{l.set=new Set(liftNames(allRecs,l.kw));
+      l.disp=l.zh+' · '+([...l.set].join(' / ')||'找不到');});
     DATA={recs:allRecs,labels:allLabels,nW:allLabels.length,cycles};
     populateRange(allLabels);
     buildCycleButtons(cycles);
