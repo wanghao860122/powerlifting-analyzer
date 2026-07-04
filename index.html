@@ -353,6 +353,20 @@ function parsePlannedRpe(v){
   const n=parseFloat(m[1].replace(',','.'));
   return(n>=1&&n<=10.5)?n:null;
 }
+function parseRpe(v){
+  if(v==null)return null;
+  if(typeof v==='number')return(v>=1&&v<=10.5)?v:null;
+  const s=String(v).trim();
+  const range=s.match(/^(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)/);
+  if(range)return parseFloat(range[1]); // lower bound of range like "5-5.5"
+  const n=parseFloat(s);
+  return(!isNaN(n)&&n>=1&&n<=10.5)?n:null;
+}
+function parseNum(v,lo,hi){
+  if(v==null)return null;
+  const n=(typeof v==='number')?v:parseFloat(String(v));
+  return(!isNaN(n)&&n>=lo&&n<=hi)?n:null;
+}
 
 const RPE_COLORS={5:'#ff6b6b',5.5:'#ffa94d',6:'#ffe066',6.5:'#a9e34b',7:'#4dabf7',
   7.5:'#b197fc',8:'#f783ac',8.5:'#63e6be',9:'#e599f7',9.5:'#66d9e8',10:'#ffffff'};
@@ -382,13 +396,14 @@ function slope(xs,ys){const n=xs.length;if(n<2)return null;const mx=xs.reduce((a
 function intercept(xs,ys,b1){const n=xs.length;const mx=xs.reduce((a,b)=>a+b,0)/n,my=ys.reduce((a,b)=>a+b,0)/n;return my-b1*mx;}
 
 /* ---------- fetch via gviz JSONP ---------- */
-function fetchSheet(id,sheet){return new Promise((res,rej)=>{
+function fetchSheet(id,sheetOrGid){return new Promise((res,rej)=>{
   const cb='__gviz'+Math.random().toString(36).slice(2);
   window[cb]=(o)=>{cleanup();res(o);};
   function cleanup(){delete window[cb];s.remove();clearTimeout(t);}
   const t=setTimeout(()=>{cleanup();rej(new Error('timeout'));},15000);
   const s=document.createElement('script');
-  s.src=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?sheet=${encodeURIComponent(sheet)}&headers=0&tqx=responseHandler:${cb}`;
+  const param=typeof sheetOrGid==='number'?`gid=${sheetOrGid}`:`sheet=${encodeURIComponent(sheetOrGid)}`;
+  s.src=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?${param}&headers=0&tqx=responseHandler:${cb}`;
   s.onerror=()=>{cleanup();rej(new Error('無法載入，請確認共用設定為「知道連結的任何人」'));};
   document.body.appendChild(s);
 });}
@@ -400,27 +415,43 @@ function gvizToGrid(resp){ // -> 2D array [row][col] (col index = spreadsheet co
 }
 
 function detectBlockFmt(grid){
-  // Detect 12-col format (Training col at +4) vs legacy 5-col format (exercise at +0)
+  // Scan rows 0-4 for the week label row (2+ cells matching week patterns)
+  const WK_PAT=/\bB\d+W\d+\b|Block\s*\d+\s*Week\s*\d+|^W\d+$|^Week\s*\d+$/i;
+  for(let ri=0;ri<Math.min(5,grid.length);ri++){
+    const row=grid[ri]||[];
+    const wkCells=row.filter(v=>v!=null&&WK_PAT.test(String(v).trim()));
+    if(wkCells.length>=2){
+      const nr=(grid[ri+1]||[]).map(v=>String(v||'').toLowerCase().trim());
+      if(nr.some(v=>v==='training'))
+        return{weekRow:ri,dataStart:ri+2,exOff:4,repsOff:6,intOff:7,wtOff:8,rpeOff:9,mode:'sep'};
+      // Old "B1W1" format: exercise at +0 from week col, weight at +3, rpe at +4
+      return{weekRow:ri,dataStart:ri+2,exOff:0,volOff:1,intOff:2,wtOff:3,rpeOff:4,mode:'comb'};
+    }
+  }
+  // Fallback: check row 1 for 'training'
   const r1=(grid[1]||[]).map(v=>String(v||'').toLowerCase().trim());
   if(r1.some(v=>v==='training'))
-    return{exOff:4,repsOff:6,intOff:7,wtOff:8,rpeOff:9,mode:'sep'};
-  return{exOff:0,volOff:1,intOff:2,wtOff:3,rpeOff:4,mode:'comb'};
+    return{weekRow:0,dataStart:2,exOff:4,repsOff:6,intOff:7,wtOff:8,rpeOff:9,mode:'sep'};
+  return{weekRow:0,dataStart:2,exOff:0,volOff:1,intOff:2,wtOff:3,rpeOff:4,mode:'comb'};
 }
 function parse(grid){
   const fmt=detectBlockFmt(grid);
-  const row0=grid[0]||[];
-  const weekCols=[];row0.forEach((v,i)=>{if(v!=null&&String(v).trim()!=='')weekCols.push({i,label:String(v).trim()})});
+  const weekCols=[];
+  (grid[fmt.weekRow]||[]).forEach((v,i)=>{
+    if(v!=null&&String(v).trim()!=='')weekCols.push({i,label:String(v).trim()});});
   const recs=[];
   weekCols.forEach((wk,ti)=>{
-    for(let r=2;r<grid.length;r++){
+    for(let r=fmt.dataStart;r<grid.length;r++){
       const exv=grid[r][wk.i+fmt.exOff];if(exv==null||String(exv).trim()==='')continue;
       const exs=String(exv).trim();const low=exs.toLowerCase();
       if(low.includes('excersie')||low.includes('volume')||low==='training')continue;
-      let w=grid[r][wk.i+fmt.wtOff];w=(typeof w==='number'&&w>0&&w<1000)?w:null;
-      let rpe=grid[r][wk.i+fmt.rpeOff];rpe=(typeof rpe==='number'&&rpe>=1&&rpe<=10.5)?rpe:null;
+      if(/^D\d+:/.test(exs))continue; // skip day-header rows like "D1:Excersie"
+      const w=parseNum(grid[r][wk.i+fmt.wtOff],1,1000);
+      const rpe=parseRpe(grid[r][wk.i+fmt.rpeOff]);
       let reps;
       if(fmt.mode==='sep'){
-        reps=grid[r][wk.i+fmt.repsOff];reps=(typeof reps==='number'&&reps>0)?Math.round(reps):null;
+        const rv=grid[r][wk.i+fmt.repsOff];
+        reps=(typeof rv==='number'&&rv>0)?Math.round(rv):null;
       }else{reps=parseReps(grid[r][wk.i+fmt.volOff]);}
       const prpe=parsePlannedRpe(grid[r][wk.i+fmt.intOff]);
       recs.push({t:ti+1,label:wk.label,exn:titleCase(exs),w,rpe,reps,prpe,
@@ -657,31 +688,46 @@ function isCycleSheet(grid){return grid.some(row=>row.some(v=>v&&/xcersie|weight
 async function run(){
   const st=document.getElementById('status');
   const id=idFromUrl(document.getElementById('url').value);
-  if(!id){st('無效的網址或 ID，請貼上完整 Google Sheets 連結');return;}
-  if(!id){st.textContent='請先輸入網址';return;}
+  if(!id){st.textContent='無效的網址或 ID，請貼上完整 Google Sheets 連結';return;}
   st.textContent='載入中…';
   Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
   try{
-    let allRecs=[], allLabels=[];
+    let allRecs=[],allLabels=[];
     const seenFp=new Set();
-    for(let n=1;n<=30;n++){                       // 逐一嘗試 Cycle1、Cycle2 …直到不存在
+    let sheetIdx=0;
+
+    async function tryParse(sheetOrGid){
       let grid;
-      try{ grid=gvizToGrid(await fetchSheet(id,'Cycle'+n)); }catch(e){ if(n===1) throw e; break; }
-      if(!isCycleSheet(grid)) break;              // 此 Cycle 不存在（gviz 回退到其他分頁）
-      const fp=(grid[0]||[]).filter(v=>v!=null&&String(v).trim()).join('|');
-      if(seenFp.has(fp)) break;                  // gviz 回退到已讀過的分頁（無 CycleN tab）
+      try{grid=gvizToGrid(await fetchSheet(id,sheetOrGid));}catch(e){return false;}
+      if(!isCycleSheet(grid))return false;
+      // Multi-row fingerprint to robustly detect duplicates
+      const fp=[0,1,2].map(ri=>(grid[ri]||[]).filter(v=>v!=null&&String(v).trim()).join('|')).join('||');
+      if(seenFp.has(fp))return false;
       seenFp.add(fp);
-      const {recs,weeks}=parse(grid);
-      if(!weeks.length) break;
+      const{recs,weeks}=parse(grid);
+      if(!weeks.length)return false;
+      sheetIdx++;
       const base=allLabels.length;
-      recs.forEach(r=>{r.t+=base; r.cycle=n;});    // 時間軸接續前面的 cycle
+      recs.forEach(r=>{r.t+=base;r.cycle=sheetIdx;});
       const labs=weeks.map((w,i)=>{
         const dup=weeks.filter((x,j)=>x===w&&j<=i).length;
         const tot=weeks.filter(x=>x===w).length;
-        return `C${n} ${tot>1?w+String.fromCharCode(96+dup):w}`;});
+        return `C${sheetIdx} ${tot>1?w+String.fromCharCode(96+dup):w}`;});
       allLabels=allLabels.concat(labs);
       allRecs=allRecs.concat(recs);
+      return true;
     }
+
+    // Phase 1: try gid=0..4 — catches multi-sheet spreadsheets with historical data in earlier tabs
+    for(let gid=0;gid<=4;gid++) await tryParse(gid);
+
+    // Phase 2: try Cycle1..Cycle20 by name — for traditional multi-tab layouts
+    let fails=0;
+    for(let n=1;n<=20;n++){
+      const ok=await tryParse('Cycle'+n);
+      if(ok){fails=0;}else{fails++;if(fails>=2)break;}
+    }
+
     if(!allLabels.length)throw new Error('找不到有效課表資料，請確認試算表含 Training / Weight Load 欄位，且設為「知道連結的任何人可檢視」');
     LIFTS.forEach(l=>{l.set=new Set(liftNames(allRecs,l.kw));
       l.disp=l.zh+' · '+([...l.set].join(' / ')||'找不到');});
@@ -692,7 +738,7 @@ async function run(){
     document.getElementById('rangebar').style.display='flex';
     const latest=cycles[cycles.length-1];
     analyze(latest.from,latest.to);
-    st.textContent=`✓ 完成：${cycles.length} 個區段 · 共 ${allLabels.length} 週`;
+    st.textContent=`✓ 完成：${cycles.length} 個 Cycle · 共 ${allLabels.length} 週`;
   }catch(e){st.textContent='✗ '+e.message;console.error(e);}
 }
 
@@ -701,7 +747,9 @@ function detectCyclesFromLabels(labels){
   const result=[];let curKey=null,curStart=0;
   labels.forEach((lbl,i)=>{
     const cm=(lbl.match(/^C(\d+)/)||[])[1];
-    const bm=(lbl.match(/Block\s*(\d+)/i)||[])[1];
+    // Match "Block N" OR "B{N}W{M}" style labels
+    const bm=(lbl.match(/Block\s*(\d+)/i)||[])[1]||
+             (lbl.match(/\bB(\d+)W/i)||[])[1];
     let newKey=null;
     if(bm)newKey=(cm||'0')+'-B'+bm;
     else if(cm&&(!curKey||!curKey.startsWith(cm+'-')))newKey=cm+'-0';
@@ -720,7 +768,7 @@ function buildCycleButtons(cycles,activeIdx){
     b.style.color='var(--green)';b.style.borderColor='var(--green)';}
   const mk=(txt,lo,hi)=>{const b=document.createElement('button');b.textContent=txt;
     b.style.cssText='padding:5px 12px;font-size:11px;letter-spacing:.5px;background:var(--surface3);color:var(--text-mid);border:1px solid var(--border-hi)';
-    b.onclick=()=>{setActive(b);document.getElementById('fromWk').value=lo;document.getElementById('toWk').value=hi;analyze(lo,hi);};
+    b.onclick=()=>{setActive(b);document.getElementById('fromWk').selectedIndex=lo-1;document.getElementById('toWk').selectedIndex=hi-1;analyze(lo,hi);};
     box.appendChild(b);btns.push(b);return b;};
   mk('全部',1,DATA.nW);
   const cBtns=cycles.map(c=>mk(c.label,c.from,c.to));
@@ -731,11 +779,11 @@ function populateRange(labels){
   const f=document.getElementById('fromWk'),t=document.getElementById('toWk');
   f.innerHTML='';t.innerHTML='';
   labels.forEach((w,i)=>{f.add(new Option(w,i+1));t.add(new Option(w,i+1));});
-  f.value=1;t.value=labels.length;
+  f.selectedIndex=0;t.selectedIndex=labels.length-1;
 }
 function applyRange(){
   let lo=+document.getElementById('fromWk').value, hi=+document.getElementById('toWk').value;
-  if(lo>hi){const x=lo;lo=hi;hi=x;document.getElementById('fromWk').value=lo;document.getElementById('toWk').value=hi;}
+  if(lo>hi){const x=lo;lo=hi;hi=x;document.getElementById('fromWk').selectedIndex=lo-1;document.getElementById('toWk').selectedIndex=hi-1;}
   analyze(lo,hi);
 }
 function analyze(lo,hi){
