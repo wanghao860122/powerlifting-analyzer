@@ -361,7 +361,7 @@ const LIFTS=[{key:'Squat',zh:'深蹲',kw:['squat'],color:getVar('--squat')},
   {key:'Deadlift',zh:'硬舉',kw:['deadlift','dead'],color:getVar('--dead')}];
 function getVar(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
 // 動作名含任一關鍵字即視為該項；合併槓鈴比賽變化式(low bar/pause/comp/conventional…)，只排除輔助/器械動作。
-const ACCESSORY=/machine|dumbbell|\bdb\b|goblet|leg ?press|cable|\bhack\b|\brdl\b|romanian|good ?morning|lunge|split ?squat|bulgarian|leg ?curl|leg ?ext|calf|tempo|\brow\b|curl|\bdip|pull.?down|pulldown|pull.?up|chin|extension|raise|\bfly\b|pushdown|face ?pull|shrug|overhead|\bohp\b|chest press|dead ?bug|dead ?hang|glute|hip thrust|plank|abs?\b|core/i;
+const ACCESSORY=/machine|dumbbell|\bdb\b|goblet|leg ?press|cable|\bhack\b|\brdl\b|romanian|good ?morning|lunge|split ?squat|bulgarian|bulgaria|\bsmith\b|incline|leg ?curl|leg ?ext|calf|tempo|\brow\b|curl|\bdip|pull.?down|pulldown|pull.?up|chin|extension|raise|\bfly\b|pushdown|face ?pull|shrug|overhead|\bohp\b|chest press|dead ?bug|dead ?hang|glute|hip thrust|plank|abs?\b|core/i;
 function liftNames(recs,kws){
   const cnt={};recs.forEach(r=>{const n=r.exn||'';const nl=n.toLowerCase();
     if(kws.some(k=>nl.includes(k)))cnt[n]=(cnt[n]||0)+((r.w&&r.rpe)?1:0);});
@@ -399,25 +399,35 @@ function gvizToGrid(resp){ // -> 2D array [row][col] (col index = spreadsheet co
   return grid;
 }
 
+function detectBlockFmt(grid){
+  // Detect 12-col format (Training col at +4) vs legacy 5-col format (exercise at +0)
+  const r1=(grid[1]||[]).map(v=>String(v||'').toLowerCase().trim());
+  if(r1.some(v=>v==='training'))
+    return{exOff:4,repsOff:6,intOff:7,wtOff:8,rpeOff:9,mode:'sep'};
+  return{exOff:0,volOff:1,intOff:2,wtOff:3,rpeOff:4,mode:'comb'};
+}
 function parse(grid){
+  const fmt=detectBlockFmt(grid);
   const row0=grid[0]||[];
-  const weekCols=[]; row0.forEach((v,i)=>{if(v!=null&&String(v).trim()!=='')weekCols.push({i,label:String(v).trim()})});
+  const weekCols=[];row0.forEach((v,i)=>{if(v!=null&&String(v).trim()!=='')weekCols.push({i,label:String(v).trim()})});
   const recs=[];
   weekCols.forEach((wk,ti)=>{
-    const ex=wk.i, vol=wk.i+1, wt=wk.i+3, rp=wk.i+4;
     for(let r=2;r<grid.length;r++){
-      const exv=grid[r][ex]; if(exv==null||String(exv).trim()==='')continue;
-      const exs=String(exv).trim(); const low=exs.toLowerCase();
-      if(low.includes('excersie')||low.includes('volume'))continue;
-      let w=grid[r][wt]; w=(typeof w==='number'&&w>0&&w<1000)?w:null;
-      let rpe=grid[r][rp]; rpe=(typeof rpe==='number'&&rpe>=1&&rpe<=10.5)?rpe:null; // 過濾誤植的日期/怪值
-      const reps=parseReps(grid[r][vol]);
-      const prpe=parsePlannedRpe(grid[r][wk.i+2]);
+      const exv=grid[r][wk.i+fmt.exOff];if(exv==null||String(exv).trim()==='')continue;
+      const exs=String(exv).trim();const low=exs.toLowerCase();
+      if(low.includes('excersie')||low.includes('volume')||low==='training')continue;
+      let w=grid[r][wk.i+fmt.wtOff];w=(typeof w==='number'&&w>0&&w<1000)?w:null;
+      let rpe=grid[r][wk.i+fmt.rpeOff];rpe=(typeof rpe==='number'&&rpe>=1&&rpe<=10.5)?rpe:null;
+      let reps;
+      if(fmt.mode==='sep'){
+        reps=grid[r][wk.i+fmt.repsOff];reps=(typeof reps==='number'&&reps>0)?Math.round(reps):null;
+      }else{reps=parseReps(grid[r][wk.i+fmt.volOff]);}
+      const prpe=parsePlannedRpe(grid[r][wk.i+fmt.intOff]);
       recs.push({t:ti+1,label:wk.label,exn:titleCase(exs),w,rpe,reps,prpe,
         e:(w&&rpe&&reps)?e1rm(w,reps,rpe):null});
     }
   });
-  return {recs,weeks:weekCols.map(w=>w.label)};
+  return{recs,weeks:weekCols.map(w=>w.label)};
 }
 
 /* ---------- rendering ---------- */
@@ -642,7 +652,7 @@ function renderRpeTable(){
 }
 
 // 真正的 Cycle 分頁一定含表頭關鍵字；不存在的分頁 gviz 會回退到別的分頁(如 intro)，以此區分
-function isCycleSheet(grid){return grid.some(row=>row.some(v=>v&&/xcersie|weight\s*load/i.test(String(v))));}
+function isCycleSheet(grid){return grid.some(row=>row.some(v=>v&&/xcersie|weight\s*load|^training$/i.test(String(v).trim())));}
 
 async function run(){
   const st=document.getElementById('status');
@@ -653,10 +663,14 @@ async function run(){
   Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
   try{
     let allRecs=[], allLabels=[], cycles=[];
+    const seenFp=new Set();
     for(let n=1;n<=30;n++){                       // 逐一嘗試 Cycle1、Cycle2 …直到不存在
       let grid;
       try{ grid=gvizToGrid(await fetchSheet(id,'Cycle'+n)); }catch(e){ if(n===1) throw e; break; }
       if(!isCycleSheet(grid)) break;              // 此 Cycle 不存在（gviz 回退到其他分頁）
+      const fp=(grid[0]||[]).filter(v=>v!=null&&String(v).trim()).join('|');
+      if(seenFp.has(fp)) break;                  // gviz 回退到已讀過的分頁（無 CycleN tab）
+      seenFp.add(fp);
       const {recs,weeks}=parse(grid);
       if(!weeks.length) break;
       const base=allLabels.length;
@@ -669,7 +683,7 @@ async function run(){
       allLabels=allLabels.concat(labs);
       allRecs=allRecs.concat(recs);
     }
-    if(!allLabels.length)throw new Error('找不到 Cycle 分頁，請確認分頁名為 Cycle1 / Cycle2 …且為此課表格式');
+    if(!allLabels.length)throw new Error('找不到有效課表資料，請確認試算表含 Training / Weight Load 欄位，且設為「知道連結的任何人可檢視」');
     LIFTS.forEach(l=>{l.set=new Set(liftNames(allRecs,l.kw));
       l.disp=l.zh+' · '+([...l.set].join(' / ')||'找不到');});
     DATA={recs:allRecs,labels:allLabels,nW:allLabels.length,cycles};
