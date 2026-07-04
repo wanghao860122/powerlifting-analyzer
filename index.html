@@ -698,19 +698,19 @@ async function run(){
 
 function detectCyclesFromLabels(labels){
   if(!labels.length)return[];
-  const result=[];let curKey=null,curStart=0,curLabel='Cycle 1';
+  const result=[];let curKey=null,curStart=0;
   labels.forEach((lbl,i)=>{
     const cm=(lbl.match(/^C(\d+)/)||[])[1];
     const bm=(lbl.match(/Block\s*(\d+)/i)||[])[1];
-    let newKey=null,newLabel=null;
-    if(bm){newKey=(cm||'0')+'-B'+bm;newLabel=(cm?'C'+cm+' Block ':' Block ')+bm;}
-    else if(cm&&(!curKey||!curKey.startsWith(cm+'-'))){newKey=cm+'-0';newLabel='Cycle '+cm;}
+    let newKey=null;
+    if(bm)newKey=(cm||'0')+'-B'+bm;
+    else if(cm&&(!curKey||!curKey.startsWith(cm+'-')))newKey=cm+'-0';
     if(newKey&&newKey!==curKey){
-      if(curKey!==null)result.push({n:result.length+1,label:curLabel,from:curStart+1,to:i});
-      curKey=newKey;curStart=i;curLabel=newLabel;
-    }else if(!curKey){curKey='0-0';}
+      if(curKey!==null)result.push({n:result.length+1,label:'C'+(result.length+1),from:curStart+1,to:i});
+      curKey=newKey;curStart=i;
+    }else if(!curKey)curKey='0-0';
   });
-  result.push({n:result.length+1,label:curLabel,from:curStart+1,to:labels.length});
+  result.push({n:result.length+1,label:'C'+(result.length+1),from:curStart+1,to:labels.length});
   return result;
 }
 function buildCycleButtons(cycles,activeIdx){
