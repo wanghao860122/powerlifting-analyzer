@@ -662,7 +662,7 @@ async function run(){
   st.textContent='載入中…';
   Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
   try{
-    let allRecs=[], allLabels=[], cycles=[];
+    let allRecs=[], allLabels=[];
     const seenFp=new Set();
     for(let n=1;n<=30;n++){                       // 逐一嘗試 Cycle1、Cycle2 …直到不存在
       let grid;
@@ -679,30 +679,52 @@ async function run(){
         const dup=weeks.filter((x,j)=>x===w&&j<=i).length;
         const tot=weeks.filter(x=>x===w).length;
         return `C${n} ${tot>1?w+String.fromCharCode(96+dup):w}`;});
-      cycles.push({n,from:base+1,to:base+weeks.length});
       allLabels=allLabels.concat(labs);
       allRecs=allRecs.concat(recs);
     }
     if(!allLabels.length)throw new Error('找不到有效課表資料，請確認試算表含 Training / Weight Load 欄位，且設為「知道連結的任何人可檢視」');
     LIFTS.forEach(l=>{l.set=new Set(liftNames(allRecs,l.kw));
       l.disp=l.zh+' · '+([...l.set].join(' / ')||'找不到');});
+    const cycles=detectCyclesFromLabels(allLabels);
     DATA={recs:allRecs,labels:allLabels,nW:allLabels.length,cycles};
     populateRange(allLabels);
-    buildCycleButtons(cycles);
+    buildCycleButtons(cycles,cycles.length-1);
     document.getElementById('rangebar').style.display='flex';
-    analyze(1,allLabels.length);
-    st.textContent=`✓ 完成：${cycles.length} 個 Cycle · 共 ${allLabels.length} 週。可用上方按鈕或下拉選區間`;
+    const latest=cycles[cycles.length-1];
+    analyze(latest.from,latest.to);
+    st.textContent=`✓ 完成：${cycles.length} 個區段 · 共 ${allLabels.length} 週`;
   }catch(e){st.textContent='✗ '+e.message;console.error(e);}
 }
 
-function buildCycleButtons(cycles){
+function detectCyclesFromLabels(labels){
+  if(!labels.length)return[];
+  const result=[];let curKey=null,curStart=0,curLabel='Cycle 1';
+  labels.forEach((lbl,i)=>{
+    const cm=(lbl.match(/^C(\d+)/)||[])[1];
+    const bm=(lbl.match(/Block\s*(\d+)/i)||[])[1];
+    let newKey=null,newLabel=null;
+    if(bm){newKey=(cm||'0')+'-B'+bm;newLabel=(cm?'C'+cm+' Block ':' Block ')+bm;}
+    else if(cm&&(!curKey||!curKey.startsWith(cm+'-'))){newKey=cm+'-0';newLabel='Cycle '+cm;}
+    if(newKey&&newKey!==curKey){
+      if(curKey!==null)result.push({n:result.length+1,label:curLabel,from:curStart+1,to:i});
+      curKey=newKey;curStart=i;curLabel=newLabel;
+    }else if(!curKey){curKey='0-0';}
+  });
+  result.push({n:result.length+1,label:curLabel,from:curStart+1,to:labels.length});
+  return result;
+}
+function buildCycleButtons(cycles,activeIdx){
   const box=document.getElementById('cyclebtns');box.innerHTML='';
+  const btns=[];
+  function setActive(b){btns.forEach(x=>{x.style.color='var(--text-mid)';x.style.borderColor='var(--border-hi)';});
+    b.style.color='var(--green)';b.style.borderColor='var(--green)';}
   const mk=(txt,lo,hi)=>{const b=document.createElement('button');b.textContent=txt;
-    b.style.cssText='padding:6px 11px;font-size:12px;background:var(--card2);color:var(--ink);border:1px solid var(--line)';
-    b.onclick=()=>{document.getElementById('fromWk').value=lo;document.getElementById('toWk').value=hi;analyze(lo,hi);};
-    box.appendChild(b);};
+    b.style.cssText='padding:5px 12px;font-size:11px;letter-spacing:.5px;background:var(--surface3);color:var(--text-mid);border:1px solid var(--border-hi)';
+    b.onclick=()=>{setActive(b);document.getElementById('fromWk').value=lo;document.getElementById('toWk').value=hi;analyze(lo,hi);};
+    box.appendChild(b);btns.push(b);return b;};
   mk('全部',1,DATA.nW);
-  cycles.forEach(c=>mk('Cycle'+c.n,c.from,c.to));
+  const cBtns=cycles.map(c=>mk(c.label,c.from,c.to));
+  if(activeIdx!=null&&cBtns[activeIdx])setActive(cBtns[activeIdx]);
 }
 
 function populateRange(labels){
