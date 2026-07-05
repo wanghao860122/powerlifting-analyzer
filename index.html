@@ -708,6 +708,10 @@ async function run(){
       const dataFp=recs.filter(r=>r.w&&r.rpe).slice(0,10).map(r=>`${r.exn}|${r.w}|${r.rpe}`).join(';;');
       if(dataFp&&seenDataFp.has(dataFp))return false;
       if(dataFp)seenDataFp.add(dataFp);
+      // gid-based load (Phase 1): if it's old B-block format, only use for redirect
+      // detection (fingerprint already recorded above) — skip adding to output.
+      // Only named Cycle tabs are shown as training cycle buttons.
+      if(!name){const fmt=detectBlockFmt(grid);if(fmt.mode==='comb')return false;}
       if(name)seenNames.add(name);
       sheetIdx++;
       const base=allLabels.length;
