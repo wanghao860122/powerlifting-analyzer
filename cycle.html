@@ -186,13 +186,15 @@
 <div class="wrap">
 
   <div class="bar">
+    <input id="url" type="text" placeholder="貼上 Google Sheets 網址或 ID">
     <input id="bw" type="number" placeholder="體重 kg" min="30" max="250" step="0.1"
       style="width:90px" oninput="updateCoeffDisplay()">
     <select id="sex" onchange="updateCoeffDisplay()">
       <option value="m">男 / M</option>
       <option value="f">女 / F</option>
     </select>
-    <span id="status">載入中…</span>
+    <button onclick="run()">分析</button>
+    <span id="status">準備就緒</span>
   </div>
 
   <div class="bar" id="rangebar" style="display:none">
@@ -685,7 +687,8 @@ function isCycleSheet(grid){return grid.some(row=>row.some(v=>v&&/xcersie|weight
 
 async function run(){
   const st=document.getElementById('status');
-  const id='1DCevwkXL0KRyZPSYjd7EEt8gXJImb3dXp0NPuNdJyVY';
+  const id=idFromUrl(document.getElementById('url').value);
+  if(!id){st.textContent='無效的網址或 ID，請貼上完整 Google Sheets 連結';return;}
   st.textContent='載入中…';
   Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
   try{
@@ -791,7 +794,6 @@ function analyze(lo,hi){
 }
 
 renderRpeTable();
-run();
 </script>
 </body>
 </html>
