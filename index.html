@@ -693,26 +693,19 @@ async function run(){
   Object.values(CH).forEach(c=>c.destroy());CH={};document.getElementById('lifts').innerHTML='';
   try{
     let allRecs=[],allLabels=[];
-    const seenNames=new Set();
-    const seenDataFp=new Set();
+    const seenFp=new Set();
     let sheetIdx=0;
 
     async function tryParse(sheetOrGid){
       let grid;
       try{grid=gvizToGrid(await fetchSheet(id,sheetOrGid));}catch(e){return false;}
       if(!isCycleSheet(grid))return false;
-      const name=typeof sheetOrGid==='string'?sheetOrGid:null;
-      if(name&&seenNames.has(name))return false;
+      // Multi-row fingerprint to robustly detect duplicates
+      const fp=[0,1,2].map(ri=>(grid[ri]||[]).filter(v=>v!=null&&String(v).trim()).join('|')).join('||');
+      if(seenFp.has(fp))return false;
+      seenFp.add(fp);
       const{recs,weeks}=parse(grid);
       if(!weeks.length)return false;
-      const dataFp=recs.filter(r=>r.w&&r.rpe).slice(0,10).map(r=>`${r.exn}|${r.w}|${r.rpe}`).join(';;');
-      if(dataFp&&seenDataFp.has(dataFp))return false;
-      if(dataFp)seenDataFp.add(dataFp);
-      // gid-based load (Phase 1): if it's old B-block format, only use for redirect
-      // detection (fingerprint already recorded above) — skip adding to output.
-      // Only named Cycle tabs are shown as training cycle buttons.
-      if(!name){const fmt=detectBlockFmt(grid);if(fmt.mode==='comb')return false;}
-      if(name)seenNames.add(name);
       sheetIdx++;
       const base=allLabels.length;
       recs.forEach(r=>{r.t+=base;r.cycle=sheetIdx;});
@@ -725,21 +718,25 @@ async function run(){
       return true;
     }
 
-    // Phase 1: gid=0 (first/default tab) for old-format historical data
-    await tryParse(0);
+    // Phase 1: try gid=0..4 — catches multi-sheet spreadsheets with historical data in earlier tabs
+    for(let gid=0;gid<=4;gid++) await tryParse(gid);
 
-    // Phase 2: Cycle1..Cycle6 — one named tab per training cycle
-    for(let n=1;n<=6;n++) await tryParse('Cycle'+n);
+    // Phase 2: try Cycle1..Cycle20 by name — for traditional multi-tab layouts
+    let fails=0;
+    for(let n=1;n<=20;n++){
+      const ok=await tryParse('Cycle'+n);
+      if(ok){fails=0;}else{fails++;if(fails>=2)break;}
+    }
 
     if(!allLabels.length)throw new Error('找不到有效課表資料，請確認試算表含 Training / Weight Load 欄位，且設為「知道連結的任何人可檢視」');
     LIFTS.forEach(l=>{l.set=new Set(liftNames(allRecs,l.kw));
       l.disp=l.zh+' · '+([...l.set].join(' / ')||'找不到');});
     const cycles=detectCyclesFromLabels(allLabels);
     DATA={recs:allRecs,labels:allLabels,nW:allLabels.length,cycles};
-    const latest=cycles[cycles.length-1];
-    populateRange(allLabels,latest.from,latest.to);
+    populateRange(allLabels);
     buildCycleButtons(cycles,cycles.length-1);
     document.getElementById('rangebar').style.display='flex';
+    const latest=cycles[cycles.length-1];
     analyze(latest.from,latest.to);
     st.textContent=`✓ 完成：${cycles.length} 個 Cycle · 共 ${allLabels.length} 週`;
   }catch(e){st.textContent='✗ '+e.message;console.error(e);}
@@ -747,13 +744,19 @@ async function run(){
 
 function detectCyclesFromLabels(labels){
   if(!labels.length)return[];
-  const result=[];let curC=null,curStart=0;
+  const result=[];let curKey=null,curStart=0;
   labels.forEach((lbl,i)=>{
-    const cm=(lbl.match(/^C(\d+)\s/)||[,''])[1];
-    if(cm!==curC){
-      if(curC!==null)result.push({n:result.length+1,label:'C'+(result.length+1),from:curStart+1,to:i});
-      curC=cm;curStart=i;
-    }
+    const cm=(lbl.match(/^C(\d+)/)||[])[1];
+    // Match "Block N" OR "B{N}W{M}" style labels
+    const bm=(lbl.match(/Block\s*(\d+)/i)||[])[1]||
+             (lbl.match(/\bB(\d+)W/i)||[])[1];
+    let newKey=null;
+    if(bm)newKey=(cm||'0')+'-B'+bm;
+    else if(cm&&(!curKey||!curKey.startsWith(cm+'-')))newKey=cm+'-0';
+    if(newKey&&newKey!==curKey){
+      if(curKey!==null)result.push({n:result.length+1,label:'C'+(result.length+1),from:curStart+1,to:i});
+      curKey=newKey;curStart=i;
+    }else if(!curKey)curKey='0-0';
   });
   result.push({n:result.length+1,label:'C'+(result.length+1),from:curStart+1,to:labels.length});
   return result;
@@ -765,19 +768,18 @@ function buildCycleButtons(cycles,activeIdx){
     b.style.color='var(--green)';b.style.borderColor='var(--green)';}
   const mk=(txt,lo,hi)=>{const b=document.createElement('button');b.textContent=txt;
     b.style.cssText='padding:5px 12px;font-size:11px;letter-spacing:.5px;background:var(--surface3);color:var(--text-mid);border:1px solid var(--border-hi)';
-    b.onclick=()=>{setActive(b);populateRange(DATA.labels,lo,hi);analyze(lo,hi);};
+    b.onclick=()=>{setActive(b);document.getElementById('fromWk').selectedIndex=lo-1;document.getElementById('toWk').selectedIndex=hi-1;analyze(lo,hi);};
     box.appendChild(b);btns.push(b);return b;};
   mk('全部',1,DATA.nW);
   const cBtns=cycles.map(c=>mk(c.label,c.from,c.to));
   if(activeIdx!=null&&cBtns[activeIdx])setActive(cBtns[activeIdx]);
 }
 
-function populateRange(labels,lo,hi){
+function populateRange(labels){
   const f=document.getElementById('fromWk'),t=document.getElementById('toWk');
   f.innerHTML='';t.innerHTML='';
   labels.forEach((w,i)=>{f.add(new Option(w,i+1));t.add(new Option(w,i+1));});
-  const s=(lo!=null?lo:1)-1,e=(hi!=null?hi:labels.length)-1;
-  f.selectedIndex=s;t.selectedIndex=e;
+  f.selectedIndex=0;t.selectedIndex=labels.length-1;
 }
 function applyRange(){
   let lo=+document.getElementById('fromWk').value, hi=+document.getElementById('toWk').value;
