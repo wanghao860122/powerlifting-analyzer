@@ -728,8 +728,8 @@ async function run(){
     // Phase 1: gid=0 (first/default tab) for old-format historical data
     await tryParse(0);
 
-    // Phase 2: Cycle1..Cycle6 — one named tab per training cycle
-    for(let n=1;n<=6;n++) await tryParse('Cycle'+n);
+    // Phase 2: C1..C6 — one named tab per training cycle
+    for(let n=1;n<=6;n++) await tryParse('C'+n);
 
     if(!allLabels.length)throw new Error('找不到有效課表資料，請確認試算表含 Training / Weight Load 欄位，且設為「知道連結的任何人可檢視」');
     LIFTS.forEach(l=>{l.set=new Set(liftNames(allRecs,l.kw));
